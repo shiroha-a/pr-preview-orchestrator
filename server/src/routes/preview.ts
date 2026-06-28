@@ -6,6 +6,15 @@ import { subscribePreview } from "../preview/events";
 
 export const previewRoutes = new Hono();
 
+/** List all preview environments with their pull request and repository. */
+previewRoutes.get("/", async (c) => {
+  const previews = await prisma.previewEnvironment.findMany({
+    include: { pullRequest: { include: { repository: true } } },
+    orderBy: { updatedAt: "desc" },
+  });
+  return c.json({ previews });
+});
+
 /** SSE stream of build logs and status changes for a preview environment. */
 previewRoutes.get("/:id/events", (c) => {
   const previewId = c.req.param("id");

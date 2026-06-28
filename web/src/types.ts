@@ -35,6 +35,14 @@ export interface PreviewDTO {
   updatedAt: string;
 }
 
+export interface PreviewListItem extends PreviewDTO {
+  pullRequest: {
+    number: number;
+    title: string;
+    repository: { owner: string; name: string };
+  };
+}
+
 export interface PullRequestDTO {
   id: string;
   repositoryId: string;
@@ -67,6 +75,7 @@ export interface CommentDTO {
 export interface AppConfig {
   tokenSet: boolean;
   webhookSecretSet: boolean;
+  adminAuthEnabled: boolean;
   preview: {
     host: string;
     portMin: number;

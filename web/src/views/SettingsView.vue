@@ -143,6 +143,32 @@ const inputClass =
 
       <BaseCard>
         <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+          <span class="text-sm font-semibold">管理アクセス</span>
+        </div>
+        <div class="space-y-2 px-4 py-3 text-sm">
+          <div class="flex items-center justify-between py-1.5">
+            <span class="text-gray-600 dark:text-gray-300">
+              Basic認証(ADMIN_USER / ADMIN_PASSWORD)
+            </span>
+            <span
+              v-if="config.adminAuthEnabled"
+              class="inline-flex items-center gap-1 text-green-600"
+            >
+              <CheckCircle2 class="h-4 w-4" />有効
+            </span>
+            <span v-else class="inline-flex items-center gap-1 text-gray-400">
+              <XCircle class="h-4 w-4" />無効
+            </span>
+          </div>
+          <p class="text-xs text-gray-500">
+            <code>ADMIN_USER</code> と <code>ADMIN_PASSWORD</code>
+            を設定すると、管理画面とAPIにBasic認証がかかります(Webhookとヘルスチェックは除外)。
+          </p>
+        </div>
+      </BaseCard>
+
+      <BaseCard>
+        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
           <span class="text-sm font-semibold">プレビュー環境</span>
         </div>
         <div class="space-y-1 px-4 py-3 text-sm">

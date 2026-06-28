@@ -16,6 +16,10 @@ const envSchema = z.object({
   API_PORT: z.coerce.number().int().default(8787),
   WEB_ORIGIN: z.string().default("http://localhost:5173"),
 
+  // Optional basic-auth credentials protecting the admin UI/API.
+  ADMIN_USER: z.string().optional(),
+  ADMIN_PASSWORD: z.string().optional(),
+
   // Optional GitHub Personal Access Token (raises rate limits / private access).
   GITHUB_TOKEN: z.string().optional(),
 
@@ -53,4 +57,9 @@ export const env: Env = envSchema.parse(process.env);
 /** Whether an optional GitHub token is configured. */
 export function hasGitHubToken(): boolean {
   return Boolean(env.GITHUB_TOKEN);
+}
+
+/** Whether admin basic-auth credentials are configured. */
+export function hasAdminAuth(): boolean {
+  return Boolean(env.ADMIN_USER && env.ADMIN_PASSWORD);
 }

@@ -2,6 +2,7 @@ import type {
   AppConfig,
   CommentDTO,
   PreviewDTO,
+  PreviewListItem,
   PullRequestDTO,
   RepositoryDTO,
   RewriteRule,
@@ -30,6 +31,8 @@ export interface RepoSettingsInput {
 
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
+
+  getPreviews: () => request<{ previews: PreviewListItem[] }>("/preview"),
 
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
