@@ -8,7 +8,7 @@ import {
   fetchPullRequestDiff,
   syncPullRequests,
 } from "../github/pulls";
-import { syncRepositories } from "../github/repositories";
+import { addRepository } from "../github/repositories";
 import { enqueueJob } from "../jobs/queue";
 import { composeProjectName } from "../preview/service";
 
@@ -21,9 +21,25 @@ async function findRepo(owner: string, name: string) {
 
 // --- Repositories ---
 
-repositoriesRoutes.post("/sync", async (c) => {
-  const result = await syncRepositories();
-  return c.json(result);
+const addRepoSchema = z.object({
+  owner: z.string().min(1),
+  name: z.string().min(1),
+});
+
+repositoriesRoutes.post("/", async (c) => {
+  const parsed = addRepoSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    return c.json({ error: "owner と name を指定してください" }, 400);
+  }
+  try {
+    const repository = await addRepository(parsed.data.owner, parsed.data.name);
+    return c.json({ repository });
+  } catch (e) {
+    return c.json(
+      { error: e instanceof Error ? e.message : "リポジトリの追加に失敗しました" },
+      400,
+    );
+  }
 });
 
 repositoriesRoutes.get("/", async (c) => {

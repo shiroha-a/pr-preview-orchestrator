@@ -10,12 +10,13 @@ datasource db {
   provider = "sqlite"
 }
 
-/// A GitHub repository the orchestrator is connected to via the GitHub App.
+/// A GitHub repository tracked by the orchestrator.
 model Repository {
   id             String   @id @default(cuid())
   owner          String
   name           String
-  installationId Int
+  // Optional: only set when accessed via a GitHub App installation (legacy).
+  installationId Int?
   // Preview configuration for this repository.
   composePath    String   @default("docker-compose.yml")
   webService     String?

@@ -4,7 +4,7 @@ export interface RepositoryDTO {
   id: string;
   owner: string;
   name: string;
-  installationId: number;
+  installationId?: number | null;
   composePath: string;
   webService: string | null;
   internalPort: number | null;
@@ -56,7 +56,12 @@ export interface CommentDTO {
 }
 
 export interface AppConfig {
-  githubReady: boolean;
-  github: { appIdSet: boolean; privateKeySet: boolean; webhookSecretSet: boolean };
-  preview: { host: string; portMin: number; portMax: number; workspacesDir: string };
+  tokenSet: boolean;
+  preview: {
+    host: string;
+    portMin: number;
+    portMax: number;
+    workspacesDir: string;
+    tunnel: boolean;
+  };
 }

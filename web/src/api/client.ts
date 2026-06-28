@@ -24,9 +24,10 @@ export const api = {
 
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
-  syncRepositories: () =>
-    request<{ repositories: number; installations: number }>("/repositories/sync", {
+  addRepository: (owner: string, name: string) =>
+    request<{ repository: RepositoryDTO }>("/repositories", {
       method: "POST",
+      body: JSON.stringify({ owner, name }),
     }),
 
   getRepo: (owner: string, name: string) =>

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-import { env, hasGitHubAppCredentials } from "./env";
+import { env, hasGitHubToken } from "./env";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
 
@@ -15,17 +15,13 @@ export function createApp() {
 
   app.get("/api/config", (c) =>
     c.json({
-      githubReady: hasGitHubAppCredentials(),
-      github: {
-        appIdSet: Boolean(env.GITHUB_APP_ID),
-        privateKeySet: Boolean(env.GITHUB_APP_PRIVATE_KEY),
-        webhookSecretSet: Boolean(env.GITHUB_WEBHOOK_SECRET),
-      },
+      tokenSet: hasGitHubToken(),
       preview: {
         host: env.PREVIEW_HOST,
         portMin: env.PREVIEW_PORT_MIN,
         portMax: env.PREVIEW_PORT_MAX,
         workspacesDir: env.WORKSPACES_DIR,
+        tunnel: env.PREVIEW_TUNNEL,
       },
     }),
   );

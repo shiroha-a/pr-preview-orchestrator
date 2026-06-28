@@ -1,13 +1,12 @@
 import { prisma } from "../db/client";
 
-import { getInstallationOctokit } from "./app";
+import { getOctokit } from "./client";
 
 /** Minimal repository reference needed to talk to the GitHub API. */
 export interface RepoRef {
   id: string;
   owner: string;
   name: string;
-  installationId: number;
 }
 
 /** A normalized comment for display, merged across comment sources. */
@@ -57,7 +56,7 @@ function mapPullToRecord(pr: GitHubPullLike) {
 
 /** Fetch all pull requests for a repository from GitHub and cache them. */
 export async function syncPullRequests(repo: RepoRef): Promise<number> {
-  const octokit = await getInstallationOctokit(repo.installationId);
+  const octokit = getOctokit();
   const pulls = await octokit.paginate("GET /repos/{owner}/{repo}/pulls", {
     owner: repo.owner,
     repo: repo.name,
@@ -81,7 +80,7 @@ export async function syncPullRequests(repo: RepoRef): Promise<number> {
 
 /** Fetch a single pull request from GitHub and cache it, returning the cached row. */
 export async function fetchAndCachePullRequest(repo: RepoRef, number: number) {
-  const octokit = await getInstallationOctokit(repo.installationId);
+  const octokit = getOctokit();
   const { data } = await octokit.rest.pulls.get({
     owner: repo.owner,
     repo: repo.name,
@@ -98,7 +97,7 @@ export async function fetchAndCachePullRequest(repo: RepoRef, number: number) {
 
 /** Fetch the unified diff text for a pull request. */
 export async function fetchPullRequestDiff(repo: RepoRef, number: number): Promise<string> {
-  const octokit = await getInstallationOctokit(repo.installationId);
+  const octokit = getOctokit();
   const res = await octokit.rest.pulls.get({
     owner: repo.owner,
     repo: repo.name,
@@ -117,7 +116,7 @@ export async function fetchPullRequestComments(
   repo: RepoRef,
   number: number,
 ): Promise<CommentDTO[]> {
-  const octokit = await getInstallationOctokit(repo.installationId);
+  const octokit = getOctokit();
   const params = { owner: repo.owner, repo: repo.name } as const;
 
   const [issueComments, reviewComments, reviews] = await Promise.all([

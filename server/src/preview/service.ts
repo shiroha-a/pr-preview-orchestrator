@@ -5,10 +5,10 @@ import { dirname, join, resolve } from "node:path";
 
 import { prisma } from "../db/client";
 import { env } from "../env";
-import { getInstallationToken } from "../github/app";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { allocateHostPort } from "./ports";
+import { startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
 
@@ -58,15 +58,18 @@ interface PrepareWorkspaceOptions {
   owner: string;
   name: string;
   number: number;
-  token: string;
+  /** Optional token for cloning private repositories. */
+  token?: string;
   onLine: (line: string) => void;
 }
 
 /** Clone (or update) the target repository and check out the PR head. */
 async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<void> {
   const { dir, owner, name, number, token, onLine } = opts;
-  const cloneUrl = `https://x-access-token:${token}@github.com/${owner}/${name}.git`;
-  const mask = [token];
+  const cloneUrl = token
+    ? `https://x-access-token:${token}@github.com/${owner}/${name}.git`
+    : `https://github.com/${owner}/${name}.git`;
+  const mask = token ? [token] : [];
 
   if (!existsSync(dir)) {
     await mkdir(dirname(dir), { recursive: true });
@@ -105,8 +108,9 @@ function writeOverride(opts: WriteOverrideOptions): void {
 }
 
 /**
- * Build (or rebuild) the preview environment for a pull request:
- * clone the PR head, generate a compose override, and run `docker compose up`.
+ * Build (or rebuild) the preview environment for a pull request: clone the PR
+ * head, generate a compose override, run `docker compose up`, and (optionally)
+ * expose it via a Cloudflare Quick Tunnel.
  */
 export async function buildPreview(pullRequestId: string): Promise<void> {
   const pr = await prisma.pullRequest.findUnique({
@@ -155,7 +159,7 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
     await setStatus("cloning");
     log(`Cloning ${repo.owner}/${repo.name} PR #${pr.number} (${pr.headSha.slice(0, 7)})...`);
 
-    const token = await getInstallationToken(repo.installationId);
+    const token = env.GITHUB_TOKEN;
     const dir = workspaceDir(repo.owner, repo.name, pr.number);
     await prepareWorkspace({
       dir,
@@ -186,16 +190,29 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
         "-d",
         "--build",
       ],
-      { cwd: dir, onLine: log, mask: [token] },
+      { cwd: dir, onLine: log, mask: token ? [token] : [] },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
 
-    const url = `http://${env.PREVIEW_HOST}:${hostPort}`;
+    // Expose the preview. Prefer a Cloudflare Quick Tunnel; fall back to a local URL.
+    let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
+    if (env.PREVIEW_TUNNEL) {
+      try {
+        log("Starting Cloudflare Quick Tunnel...");
+        url = await startTunnel(previewId, hostPort);
+        log(`Tunnel ready: ${url}`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
+      }
+    }
+
     await setStatus("running", { url, hostPort });
     log(`Preview is running at ${url}`);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     log(`ERROR: ${message}`);
+    stopTunnel(previewId);
     await setStatus("failed");
     throw e;
   }
@@ -219,6 +236,9 @@ export async function destroyPreview(pullRequestId: string): Promise<void> {
     where: { id: previewId },
     data: { status: "stopping" },
   });
+
+  // Stop the Cloudflare tunnel first.
+  stopTunnel(previewId);
 
   try {
     if (existsSync(dir)) {

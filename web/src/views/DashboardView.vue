@@ -1,23 +1,20 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { ArrowRight, GitPullRequest, KeyRound } from "lucide-vue-next";
+import { ArrowRight, GitPullRequest } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { AppConfig, RepositoryDTO } from "../types";
+import type { RepositoryDTO } from "../types";
 import BaseCard from "../components/ui/BaseCard.vue";
 
 const loading = ref(true);
 const error = ref<string | null>(null);
-const config = ref<AppConfig | null>(null);
 const repositories = ref<RepositoryDTO[]>([]);
 
 async function load() {
   loading.value = true;
   error.value = null;
   try {
-    const [cfg, repos] = await Promise.all([api.getConfig(), api.getRepositories()]);
-    config.value = cfg;
-    repositories.value = repos.repositories;
+    repositories.value = (await api.getRepositories()).repositories;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "読み込みに失敗しました";
   } finally {
@@ -38,56 +35,35 @@ onMounted(load);
     <p v-if="loading" class="text-sm text-gray-500">読み込み中...</p>
     <p v-else-if="error" class="text-sm text-red-600">{{ error }}</p>
 
-    <template v-else>
-      <BaseCard
-        v-if="config && !config.githubReady"
-        class="border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30"
-      >
-        <div class="flex items-start gap-3 p-4">
-          <KeyRound class="mt-0.5 h-5 w-5 text-amber-600" />
-          <div class="text-sm">
-            <p class="font-medium text-amber-900 dark:text-amber-200">GitHub Appが未設定です</p>
-            <p class="mt-1 text-amber-800 dark:text-amber-300">
-              <code>.env</code>
-              にGitHub
-              Appの認証情報を設定すると、リポジトリとPRを取得できます。手順はREADMEを参照してください。
-            </p>
-          </div>
+    <section v-else class="space-y-3">
+      <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">リポジトリ</h2>
+      <BaseCard v-if="repositories.length === 0">
+        <div class="p-4 text-sm text-gray-500">
+          リポジトリがありません。
+          <RouterLink to="/settings" class="text-blue-600 hover:underline">設定ページ</RouterLink>
+          から owner/name を指定して追加してください。
         </div>
       </BaseCard>
-
-      <section class="space-y-3">
-        <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">リポジトリ</h2>
-        <BaseCard v-if="repositories.length === 0">
-          <div class="p-4 text-sm text-gray-500">
-            接続済みのリポジトリはありません。
-            <RouterLink to="/settings" class="ml-1 text-blue-600 hover:underline">
-              設定ページ
-            </RouterLink>
-            からGitHub Appを接続してリポジトリを同期してください。
-          </div>
-        </BaseCard>
-        <div v-else class="grid gap-3 sm:grid-cols-2">
-          <RouterLink
-            v-for="repo in repositories"
-            :key="repo.id"
-            :to="`/repos/${repo.owner}/${repo.name}`"
-          >
-            <BaseCard class="transition-colors hover:border-blue-300 dark:hover:border-blue-700">
-              <div class="flex items-center justify-between gap-2 p-4">
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-medium">{{ repo.owner }}/{{ repo.name }}</p>
-                  <p class="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
-                    <GitPullRequest class="h-3 w-3" />
-                    {{ repo._count?.pullRequests ?? 0 }} 件のPR
-                  </p>
-                </div>
-                <ArrowRight class="h-4 w-4 shrink-0 text-gray-400" />
+      <div v-else class="grid gap-3 sm:grid-cols-2">
+        <RouterLink
+          v-for="repo in repositories"
+          :key="repo.id"
+          :to="`/repos/${repo.owner}/${repo.name}`"
+        >
+          <BaseCard class="transition-colors hover:border-blue-300 dark:hover:border-blue-700">
+            <div class="flex items-center justify-between gap-2 p-4">
+              <div class="min-w-0">
+                <p class="truncate text-sm font-medium">{{ repo.owner }}/{{ repo.name }}</p>
+                <p class="mt-0.5 flex items-center gap-1 text-xs text-gray-500">
+                  <GitPullRequest class="h-3 w-3" />
+                  {{ repo._count?.pullRequests ?? 0 }} 件のPR
+                </p>
               </div>
-            </BaseCard>
-          </RouterLink>
-        </div>
-      </section>
-    </template>
+              <ArrowRight class="h-4 w-4 shrink-0 text-gray-400" />
+            </div>
+          </BaseCard>
+        </RouterLink>
+      </div>
+    </section>
   </div>
 </template>

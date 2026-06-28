@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { CheckCircle2, XCircle } from "lucide-vue-next";
+import { CheckCircle2, Plus, XCircle } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { AppConfig } from "../types";
-import AsyncButton from "../components/AsyncButton.vue";
-import BaseBadge from "../components/ui/BaseBadge.vue";
+import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 
 const loading = ref(true);
 const error = ref<string | null>(null);
 const config = ref<AppConfig | null>(null);
+
+// リポジトリ追加フォーム
+const repoInput = ref("");
+const adding = ref(false);
+const addError = ref<string | null>(null);
+const addSuccess = ref<string | null>(null);
 
 async function load() {
   loading.value = true;
@@ -26,14 +31,37 @@ async function load() {
 
 onMounted(load);
 
-const syncRepositories = () => api.syncRepositories();
+async function addRepo() {
+  addError.value = null;
+  addSuccess.value = null;
+  const [owner, name] = repoInput.value.trim().split("/");
+  if (!owner || !name) {
+    addError.value = "owner/name の形式で入力してください(例: vercel/next.js)";
+    return;
+  }
+  adding.value = true;
+  try {
+    const { repository } = await api.addRepository(owner, name);
+    addSuccess.value = `${repository.owner}/${repository.name} を追加しました`;
+    repoInput.value = "";
+  } catch (e) {
+    addError.value = e instanceof Error ? e.message : "追加に失敗しました";
+  } finally {
+    adding.value = false;
+  }
+}
+
+const inputClass =
+  "w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900";
 </script>
 
 <template>
   <div class="space-y-6">
     <div>
       <h1 class="text-xl font-semibold">設定</h1>
-      <p class="mt-1 text-sm text-gray-500">GitHub App接続と環境設定の状態を確認します。</p>
+      <p class="mt-1 text-sm text-gray-500">
+        公開GitHub APIを使用します。リポジトリを追加してPRを取得してください。
+      </p>
     </div>
 
     <p v-if="loading" class="text-sm text-gray-500">読み込み中...</p>
@@ -41,59 +69,46 @@ const syncRepositories = () => api.syncRepositories();
 
     <template v-else-if="config">
       <BaseCard>
-        <div
-          class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800"
-        >
-          <span class="text-sm font-semibold">GitHub App</span>
-          <BaseBadge :tone="config.githubReady ? 'green' : 'amber'">
-            {{ config.githubReady ? "接続可能" : "未設定" }}
-          </BaseBadge>
+        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+          <span class="text-sm font-semibold">リポジトリを追加</span>
+        </div>
+        <form class="space-y-3 px-4 py-3" @submit.prevent="addRepo">
+          <div>
+            <label class="mb-1 block text-sm font-medium">リポジトリ(owner/name)</label>
+            <input v-model="repoInput" :class="inputClass" placeholder="vercel/next.js" />
+            <p class="mt-1 text-xs text-gray-500">
+              公開リポジトリを追加できます(privateは任意トークン設定時のみ)。
+            </p>
+          </div>
+          <div class="flex items-center justify-end gap-3">
+            <span v-if="addSuccess" class="text-xs text-green-600">{{ addSuccess }}</span>
+            <span v-if="addError" class="text-xs text-red-600">{{ addError }}</span>
+            <BaseButton type="submit" :disabled="adding">
+              <Plus class="h-4 w-4" />
+              {{ adding ? "追加中..." : "追加" }}
+            </BaseButton>
+          </div>
+        </form>
+      </BaseCard>
+
+      <BaseCard>
+        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+          <span class="text-sm font-semibold">GitHub API</span>
         </div>
         <div class="space-y-1 px-4 py-3 text-sm">
           <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">GITHUB_APP_ID</span>
-            <span
-              v-if="config.github.appIdSet"
-              class="inline-flex items-center gap-1 text-green-600"
-            >
+            <span class="text-gray-600 dark:text-gray-300">アクセストークン(任意)</span>
+            <span v-if="config.tokenSet" class="inline-flex items-center gap-1 text-green-600">
               <CheckCircle2 class="h-4 w-4" />設定済み
             </span>
             <span v-else class="inline-flex items-center gap-1 text-gray-400">
-              <XCircle class="h-4 w-4" />未設定
+              <XCircle class="h-4 w-4" />未設定(公開APIのみ)
             </span>
           </div>
-          <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">GITHUB_APP_PRIVATE_KEY</span>
-            <span
-              v-if="config.github.privateKeySet"
-              class="inline-flex items-center gap-1 text-green-600"
-            >
-              <CheckCircle2 class="h-4 w-4" />設定済み
-            </span>
-            <span v-else class="inline-flex items-center gap-1 text-gray-400">
-              <XCircle class="h-4 w-4" />未設定
-            </span>
-          </div>
-          <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">GITHUB_WEBHOOK_SECRET</span>
-            <span
-              v-if="config.github.webhookSecretSet"
-              class="inline-flex items-center gap-1 text-green-600"
-            >
-              <CheckCircle2 class="h-4 w-4" />設定済み
-            </span>
-            <span v-else class="inline-flex items-center gap-1 text-gray-400">
-              <XCircle class="h-4 w-4" />未設定
-            </span>
-          </div>
-
-          <div v-if="!config.githubReady" class="pt-2 text-xs text-gray-500">
-            <code>.env</code>にGitHub
-            Appの認証情報を設定してください。作成手順はREADMEを参照してください。
-          </div>
-          <div v-else class="flex justify-end pt-2">
-            <AsyncButton :action="syncRepositories" label="リポジトリを同期" variant="primary" />
-          </div>
+          <p class="pt-1 text-xs text-gray-500">
+            <code>GITHUB_TOKEN</code>
+            を設定するとレート制限が緩和され、privateリポジトリにもアクセスできます。
+          </p>
         </div>
       </BaseCard>
 
@@ -103,12 +118,20 @@ const syncRepositories = () => api.syncRepositories();
         </div>
         <div class="space-y-1 px-4 py-3 text-sm">
           <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">クローン先ディレクトリ</span>
-            <code class="text-xs">{{ config.preview.workspacesDir }}</code>
+            <span class="text-gray-600 dark:text-gray-300">外部公開(Cloudflare Tunnel)</span>
+            <span
+              v-if="config.preview.tunnel"
+              class="inline-flex items-center gap-1 text-green-600"
+            >
+              <CheckCircle2 class="h-4 w-4" />有効
+            </span>
+            <span v-else class="inline-flex items-center gap-1 text-gray-400">
+              <XCircle class="h-4 w-4" />無効(localhost)
+            </span>
           </div>
           <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">プレビューホスト</span>
-            <code class="text-xs">{{ config.preview.host }}</code>
+            <span class="text-gray-600 dark:text-gray-300">クローン先ディレクトリ</span>
+            <code class="text-xs">{{ config.preview.workspacesDir }}</code>
           </div>
           <div class="flex items-center justify-between py-1.5">
             <span class="text-gray-600 dark:text-gray-300">ポート範囲</span>
