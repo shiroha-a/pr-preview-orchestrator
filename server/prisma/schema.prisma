@@ -1,0 +1,81 @@
+// Prisma schema for the PR preview orchestrator.
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// A GitHub repository the orchestrator is connected to via the GitHub App.
+model Repository {
+  id             String   @id @default(cuid())
+  owner          String
+  name           String
+  installationId Int
+  // Preview configuration for this repository.
+  composePath    String   @default("docker-compose.yml")
+  webService     String?
+  internalPort   Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  pullRequests PullRequest[]
+
+  @@unique([owner, name])
+}
+
+/// A cached pull request fetched from GitHub.
+model PullRequest {
+  id           String   @id @default(cuid())
+  repositoryId String
+  number       Int
+  title        String
+  body         String?
+  state        String // open / closed / merged
+  authorLogin  String
+  headRef      String
+  headSha      String
+  baseRef      String
+  htmlUrl      String?
+  prUpdatedAt  DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  repository Repository          @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  preview    PreviewEnvironment?
+
+  @@unique([repositoryId, number])
+}
+
+/// An ephemeral Docker-based preview environment for a single pull request.
+model PreviewEnvironment {
+  id             String   @id @default(cuid())
+  pullRequestId  String   @unique
+  // idle / pending / cloning / building / running / stopping / stopped / failed
+  status         String   @default("idle")
+  composeProject String
+  url            String?
+  hostPort       Int?
+  commitSha      String?
+  logs           String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  pullRequest PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+}
+
+/// A unit of asynchronous work processed by the in-process worker.
+model Job {
+  id        String   @id @default(cuid())
+  type      String // build / stop / destroy / sync
+  payload   String // JSON-encoded payload
+  status    String   @default("queued") // queued / running / done / failed
+  attempts  Int      @default(0)
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

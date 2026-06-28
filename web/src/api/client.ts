@@ -1,0 +1,79 @@
+import type { AppConfig, CommentDTO, PreviewDTO, PullRequestDTO, RepositoryDTO } from "../types";
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const data: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = (data as { error?: string }).error ?? `Request failed (${res.status})`;
+    throw new Error(message);
+  }
+  return data as T;
+}
+
+export interface RepoSettingsInput {
+  composePath: string;
+  webService: string | null;
+  internalPort: number | null;
+}
+
+export const api = {
+  getConfig: () => request<AppConfig>("/config"),
+
+  getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
+
+  syncRepositories: () =>
+    request<{ repositories: number; installations: number }>("/repositories/sync", {
+      method: "POST",
+    }),
+
+  getRepo: (owner: string, name: string) =>
+    request<{ repository: RepositoryDTO }>(`/repositories/${owner}/${name}`),
+
+  updateRepoSettings: (owner: string, name: string, body: RepoSettingsInput) =>
+    request<{ repository: RepositoryDTO }>(`/repositories/${owner}/${name}/settings`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  getRepoPulls: (owner: string, name: string) =>
+    request<{ repository: RepositoryDTO; pullRequests: PullRequestDTO[] }>(
+      `/repositories/${owner}/${name}/pulls`,
+    ),
+
+  syncPulls: (owner: string, name: string) =>
+    request<{ count: number }>(`/repositories/${owner}/${name}/pulls/sync`, { method: "POST" }),
+
+  getPull: (owner: string, name: string, number: number) =>
+    request<{ pullRequest: PullRequestDTO; preview: PreviewDTO | null; loadError: string | null }>(
+      `/repositories/${owner}/${name}/pulls/${number}`,
+    ),
+
+  getPullDiff: (owner: string, name: string, number: number) =>
+    request<{ diff: string; error?: string }>(
+      `/repositories/${owner}/${name}/pulls/${number}/diff`,
+    ),
+
+  getPullComments: (owner: string, name: string, number: number) =>
+    request<{ comments: CommentDTO[]; error?: string }>(
+      `/repositories/${owner}/${name}/pulls/${number}/comments`,
+    ),
+
+  getPreview: (owner: string, name: string, number: number) =>
+    request<{ preview: PreviewDTO | null }>(
+      `/repositories/${owner}/${name}/pulls/${number}/preview`,
+    ),
+
+  startPreview: (owner: string, name: string, number: number) =>
+    request<{ jobId: string; previewId: string }>(
+      `/repositories/${owner}/${name}/pulls/${number}/preview`,
+      { method: "POST" },
+    ),
+
+  destroyPreview: (owner: string, name: string, number: number) =>
+    request<{ jobId: string }>(`/repositories/${owner}/${name}/pulls/${number}/preview`, {
+      method: "DELETE",
+    }),
+};
