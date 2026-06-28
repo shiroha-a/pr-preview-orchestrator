@@ -30,12 +30,21 @@ interface RunOptions {
   onLine?: (line: string) => void;
   /** Substrings to redact from output (e.g. access tokens). */
   mask?: string[];
+  /** Kill the process and reject after this many milliseconds. */
+  timeoutMs?: number;
 }
 
 /** Run a command, streaming combined stdout/stderr line-by-line to onLine. */
 function runCommand(command: string, args: string[], options: RunOptions = {}): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: options.cwd });
+
+    const timer = options.timeoutMs
+      ? setTimeout(() => {
+          child.kill("SIGKILL");
+          reject(new Error(`Command timed out after ${options.timeoutMs}ms: ${command}`));
+        }, options.timeoutMs)
+      : null;
 
     const handle = (buf: Buffer) => {
       let text = buf.toString();
@@ -49,8 +58,14 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
 
     child.stdout.on("data", handle);
     child.stderr.on("data", handle);
-    child.on("error", reject);
-    child.on("close", (code) => resolve(code ?? 0));
+    child.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve(code ?? 0);
+    });
   });
 }
 
@@ -255,7 +270,7 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
         "-d",
         "--build",
       ],
-      { cwd: dir, onLine: log, mask },
+      { cwd: dir, onLine: log, mask, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
 

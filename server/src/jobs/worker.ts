@@ -47,6 +47,13 @@ async function tick(): Promise<void> {
 export async function startWorker(intervalMs = 1500): Promise<void> {
   // Recover jobs left "running" by a previous crash by requeueing them.
   await prisma.job.updateMany({ where: { status: "running" }, data: { status: "queued" } });
+
+  // Mark previews that were in flight when the server stopped as failed
+  // (their build/clone processes no longer exist after a restart).
+  await prisma.previewEnvironment.updateMany({
+    where: { status: { in: ["pending", "cloning", "building", "stopping"] } },
+    data: { status: "failed" },
+  });
   if (timer) return;
   timer = setInterval(() => void tick(), intervalMs);
   // eslint-disable-next-line no-console

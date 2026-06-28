@@ -46,12 +46,21 @@ cp server/.env.example server/.env
 
 ## 起動
 
+開発(ホットリロード):
+
 ```bash
 npm run dev
 ```
 
 - API サーバー: http://localhost:8787
 - WebUI: http://localhost:5173 (Vite が `/api` を API サーバーへプロキシ)
+
+本番(単一プロセス):
+
+```bash
+npm run build   # web を静的ビルド + server を dist にバンドル
+npm start       # http://localhost:8787 で WebUI と API を同一ポートで配信
+```
 
 ## 使い方
 

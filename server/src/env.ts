@@ -35,6 +35,12 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v !== "false"),
+
+  // Timeout (ms) for long-running build commands (docker compose up).
+  PREVIEW_BUILD_TIMEOUT_MS: z.coerce.number().int().default(600000),
+
+  // Directory of the built web SPA, served by Hono in production (relative to server/).
+  WEB_DIST_DIR: z.string().default("../web/dist"),
 });
 
 export type Env = z.infer<typeof envSchema>;

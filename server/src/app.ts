@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
@@ -28,6 +32,14 @@ export function createApp() {
 
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);
+
+  // Serve the built web SPA in production (only when web/dist exists, so the
+  // dev server is unaffected).
+  if (existsSync(env.WEB_DIST_DIR)) {
+    app.use("/*", serveStatic({ root: env.WEB_DIST_DIR }));
+    // SPA fallback: non-file routes return index.html.
+    app.get("*", serveStatic({ path: join(env.WEB_DIST_DIR, "index.html") }));
+  }
 
   app.onError((err, c) => {
     console.error(err);
