@@ -66,6 +66,7 @@ export interface CommentDTO {
 
 export interface AppConfig {
   tokenSet: boolean;
+  webhookSecretSet: boolean;
   preview: {
     host: string;
     portMin: number;

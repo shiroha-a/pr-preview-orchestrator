@@ -114,6 +114,35 @@ const inputClass =
 
       <BaseCard>
         <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+          <span class="text-sm font-semibold">Webhook(自動連携)</span>
+        </div>
+        <div class="space-y-2 px-4 py-3 text-sm">
+          <div class="flex items-center justify-between py-1.5">
+            <span class="text-gray-600 dark:text-gray-300">
+              シークレット(GITHUB_WEBHOOK_SECRET)
+            </span>
+            <span
+              v-if="config.webhookSecretSet"
+              class="inline-flex items-center gap-1 text-green-600"
+            >
+              <CheckCircle2 class="h-4 w-4" />設定済み
+            </span>
+            <span v-else class="inline-flex items-center gap-1 text-gray-400">
+              <XCircle class="h-4 w-4" />未設定
+            </span>
+          </div>
+          <p class="text-xs text-gray-500">
+            対象リポジトリの Settings → Webhooks で、Payload URL に
+            <code>&lt;このサーバーの公開URL&gt;/api/github/webhook</code>、Content type に
+            <code>application/json</code>、Secret に <code>GITHUB_WEBHOOK_SECRET</code>
+            を設定し、Pull requests
+            イベントを購読してください。push時の自動再ビルド・クローズ時の自動破棄が有効になります。
+          </p>
+        </div>
+      </BaseCard>
+
+      <BaseCard>
+        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
           <span class="text-sm font-semibold">プレビュー環境</span>
         </div>
         <div class="space-y-1 px-4 py-3 text-sm">

@@ -19,6 +19,9 @@ const envSchema = z.object({
   // Optional GitHub Personal Access Token (raises rate limits / private access).
   GITHUB_TOKEN: z.string().optional(),
 
+  // Optional webhook secret for verifying GitHub webhook deliveries.
+  GITHUB_WEBHOOK_SECRET: z.string().optional(),
+
   // Local directory where target repositories are cloned.
   WORKSPACES_DIR: z.string().default("./workspaces"),
 

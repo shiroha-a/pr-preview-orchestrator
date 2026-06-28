@@ -8,6 +8,7 @@ import { cors } from "hono/cors";
 import { env, hasGitHubToken } from "./env";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
+import { webhookRoutes } from "./routes/webhook";
 
 /** Build the Hono application with all routes mounted. */
 export function createApp() {
@@ -20,6 +21,7 @@ export function createApp() {
   app.get("/api/config", (c) =>
     c.json({
       tokenSet: hasGitHubToken(),
+      webhookSecretSet: Boolean(env.GITHUB_WEBHOOK_SECRET),
       preview: {
         host: env.PREVIEW_HOST,
         portMin: env.PREVIEW_PORT_MIN,
@@ -32,6 +34,7 @@ export function createApp() {
 
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);
+  app.route("/api/github/webhook", webhookRoutes);
 
   // Serve the built web SPA in production (only when web/dist exists, so the
   // dev server is unaffected).
