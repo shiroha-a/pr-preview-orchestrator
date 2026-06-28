@@ -1,5 +1,12 @@
 export type BadgeTone = "gray" | "green" | "blue" | "amber" | "red" | "purple";
 
+export interface RewriteRule {
+  file: string;
+  pattern: string;
+  replacement: string;
+  flags?: string;
+}
+
 export interface RepositoryDTO {
   id: string;
   owner: string;
@@ -8,6 +15,8 @@ export interface RepositoryDTO {
   composePath: string;
   webService: string | null;
   internalPort: number | null;
+  fileRewrites: string | null;
+  resetVolumes: boolean;
   createdAt: string;
   updatedAt: string;
   _count?: { pullRequests: number };

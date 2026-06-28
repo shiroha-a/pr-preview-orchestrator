@@ -21,6 +21,10 @@ model Repository {
   composePath    String   @default("docker-compose.yml")
   webService     String?
   internalPort   Int?
+  // File rewrite rules (JSON array) applied to the cloned repo before compose up.
+  fileRewrites   String?
+  // Reset Docker volumes on each (re)build to start from a clean state.
+  resetVolumes   Boolean  @default(false)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

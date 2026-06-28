@@ -8,6 +8,7 @@ import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { allocateHostPort } from "./ports";
+import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
@@ -107,10 +108,21 @@ function writeOverride(opts: WriteOverrideOptions): void {
   writeFileSync(join(dir, OVERRIDE_FILE), yaml);
 }
 
+function hostnameOf(url: string, fallback: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return fallback;
+  }
+}
+
 /**
- * Build (or rebuild) the preview environment for a pull request: clone the PR
- * head, generate a compose override, run `docker compose up`, and (optionally)
- * expose it via a Cloudflare Quick Tunnel.
+ * Build (or rebuild) the preview environment for a pull request.
+ *
+ * Order: clone the PR head, allocate a port, start the Cloudflare tunnel (so its
+ * URL is known), apply file rewrite rules (e.g. inject the URL into a config
+ * file), generate a compose override, optionally reset volumes, then
+ * `docker compose up`.
  */
 export async function buildPreview(pullRequestId: string): Promise<void> {
   const pr = await prisma.pullRequest.findUnique({
@@ -155,11 +167,13 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
     });
   };
 
+  const token = env.GITHUB_TOKEN;
+  const mask = token ? [token] : [];
+
   try {
     await setStatus("cloning");
     log(`Cloning ${repo.owner}/${repo.name} PR #${pr.number} (${pr.headSha.slice(0, 7)})...`);
 
-    const token = env.GITHUB_TOKEN;
     const dir = workspaceDir(repo.owner, repo.name, pr.number);
     await prepareWorkspace({
       dir,
@@ -172,9 +186,60 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
 
     const hostPort = preview.hostPort ?? (await allocateHostPort());
     log(`Allocated host port ${hostPort}`);
+
+    // Start the tunnel first so its URL is known to the rewrite step.
+    let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
+    if (env.PREVIEW_TUNNEL) {
+      try {
+        log("Starting Cloudflare Quick Tunnel...");
+        url = await startTunnel(previewId, hostPort);
+        log(`Tunnel ready: ${url}`);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
+      }
+    }
+
+    // Apply file rewrite rules (e.g. inject the preview URL into a config file).
+    const rules = parseRewriteRules(repo.fileRewrites);
+    if (rules.length > 0) {
+      log(`Applying ${rules.length} file rewrite rule(s)...`);
+      applyRewrites(
+        dir,
+        rules,
+        {
+          PREVIEW_URL: url,
+          PREVIEW_HOST: hostnameOf(url, env.PREVIEW_HOST),
+          HOST_PORT: String(hostPort),
+        },
+        log,
+      );
+    }
+
     writeOverride({ dir, webService: repo.webService, hostPort, internalPort: repo.internalPort });
 
-    await setStatus("building", { hostPort });
+    await setStatus("building", { hostPort, url });
+
+    if (repo.resetVolumes) {
+      log("Resetting volumes (docker compose down -v)...");
+      await runCommand(
+        "docker",
+        [
+          "compose",
+          "-f",
+          repo.composePath,
+          "-f",
+          OVERRIDE_FILE,
+          "-p",
+          project,
+          "down",
+          "-v",
+          "--remove-orphans",
+        ],
+        { cwd: dir, onLine: log, mask },
+      );
+    }
+
     log("Running docker compose up -d --build...");
     const code = await runCommand(
       "docker",
@@ -190,22 +255,9 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
         "-d",
         "--build",
       ],
-      { cwd: dir, onLine: log, mask: token ? [token] : [] },
+      { cwd: dir, onLine: log, mask },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
-
-    // Expose the preview. Prefer a Cloudflare Quick Tunnel; fall back to a local URL.
-    let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
-    if (env.PREVIEW_TUNNEL) {
-      try {
-        log("Starting Cloudflare Quick Tunnel...");
-        url = await startTunnel(previewId, hostPort);
-        log(`Tunnel ready: ${url}`);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
-      }
-    }
 
     await setStatus("running", { url, hostPort });
     log(`Preview is running at ${url}`);
@@ -254,13 +306,16 @@ export async function destroyPreview(pullRequestId: string): Promise<void> {
           preview.composeProject,
           "down",
           "-v",
+          "--remove-orphans",
         ],
         { cwd: dir, onLine: log },
       );
     } else {
-      await runCommand("docker", ["compose", "-p", preview.composeProject, "down", "-v"], {
-        onLine: log,
-      });
+      await runCommand(
+        "docker",
+        ["compose", "-p", preview.composeProject, "down", "-v", "--remove-orphans"],
+        { onLine: log },
+      );
     }
     if (existsSync(dir)) {
       await rm(dir, { recursive: true, force: true });

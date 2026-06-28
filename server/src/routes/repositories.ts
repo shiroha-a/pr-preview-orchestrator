@@ -57,10 +57,19 @@ repositoriesRoutes.get("/:owner/:name", async (c) => {
   return c.json({ repository });
 });
 
+const rewriteRuleSchema = z.object({
+  file: z.string().min(1),
+  pattern: z.string().min(1),
+  replacement: z.string(),
+  flags: z.string().optional(),
+});
+
 const settingsSchema = z.object({
   composePath: z.string().min(1),
   webService: z.string().nullable().optional(),
   internalPort: z.coerce.number().int().positive().nullable().optional(),
+  fileRewrites: z.array(rewriteRuleSchema).optional(),
+  resetVolumes: z.boolean().optional(),
 });
 
 repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
@@ -79,6 +88,8 @@ repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
       composePath: parsed.data.composePath,
       webService: parsed.data.webService ?? null,
       internalPort: parsed.data.internalPort ?? null,
+      fileRewrites: parsed.data.fileRewrites ? JSON.stringify(parsed.data.fileRewrites) : null,
+      resetVolumes: parsed.data.resetVolumes ?? false,
     },
   });
   return c.json({ repository: updated });

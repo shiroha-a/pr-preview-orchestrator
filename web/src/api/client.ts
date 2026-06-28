@@ -1,4 +1,11 @@
-import type { AppConfig, CommentDTO, PreviewDTO, PullRequestDTO, RepositoryDTO } from "../types";
+import type {
+  AppConfig,
+  CommentDTO,
+  PreviewDTO,
+  PullRequestDTO,
+  RepositoryDTO,
+  RewriteRule,
+} from "../types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
@@ -17,6 +24,8 @@ export interface RepoSettingsInput {
   composePath: string;
   webService: string | null;
   internalPort: number | null;
+  fileRewrites: RewriteRule[];
+  resetVolumes: boolean;
 }
 
 export const api = {

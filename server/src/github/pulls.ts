@@ -1,5 +1,7 @@
 import { prisma } from "../db/client";
 
+import { enqueueJob } from "../jobs/queue";
+
 import { getOctokit } from "./client";
 
 /** Minimal repository reference needed to talk to the GitHub API. */
@@ -68,11 +70,21 @@ export async function syncPullRequests(repo: RepoRef): Promise<number> {
 
   for (const pr of pulls) {
     const record = mapPullToRecord(pr as unknown as GitHubPullLike);
-    await prisma.pullRequest.upsert({
+    const saved = await prisma.pullRequest.upsert({
       where: { repositoryId_number: { repositoryId: repo.id, number: pr.number } },
       create: { ...record, repositoryId: repo.id },
       update: record,
     });
+
+    // PRがclosed/mergedになったら、稼働中のプレビューを自動破棄する。
+    if (record.state === "closed" || record.state === "merged") {
+      const preview = await prisma.previewEnvironment.findUnique({
+        where: { pullRequestId: saved.id },
+      });
+      if (preview && ["pending", "cloning", "building", "running"].includes(preview.status)) {
+        await enqueueJob("destroy", { pullRequestId: saved.id });
+      }
+    }
   }
 
   return pulls.length;
