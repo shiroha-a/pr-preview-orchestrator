@@ -4,6 +4,8 @@ export type JobType = "build" | "destroy" | "restart";
 
 export interface JobPayload {
   pullRequestId: string;
+  /** When true, rebuild Docker images without using the build cache (issue #20). */
+  noCache?: boolean;
 }
 
 /** Enqueue a background job for the worker to process. */

@@ -44,6 +44,9 @@ export const api = {
 
   getPreviews: () => request<{ previews: PreviewListItem[] }>("/preview"),
 
+  pruneBuilderCache: () =>
+    request<{ output: string }>("/preview/builder-prune", { method: "POST" }),
+
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
   addRepository: (owner: string, name: string) =>
@@ -92,10 +95,10 @@ export const api = {
       `/repositories/${owner}/${name}/pulls/${number}/preview`,
     ),
 
-  startPreview: (owner: string, name: string, number: number) =>
+  startPreview: (owner: string, name: string, number: number, noCache = false) =>
     request<{ jobId: string; previewId: string }>(
       `/repositories/${owner}/${name}/pulls/${number}/preview`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ noCache }) },
     ),
 
   restartPreview: (owner: string, name: string, number: number) =>
@@ -117,6 +120,5 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  deleteUser: (id: string) =>
-    request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+  deleteUser: (id: string) => request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
 };

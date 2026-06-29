@@ -165,8 +165,11 @@ function hostnameOf(url: string, fallback: string): string {
  * URL is known), apply file rewrite rules (e.g. inject the URL into a config
  * file), generate a compose override, optionally reset volumes, then
  * `docker compose up`.
+ *
+ * When `noCache` is true the images are rebuilt from scratch via
+ * `docker compose build --no-cache` before starting (issue #20).
  */
-export async function buildPreview(pullRequestId: string): Promise<void> {
+export async function buildPreview(pullRequestId: string, noCache = false): Promise<void> {
   const pr = await prisma.pullRequest.findUnique({
     where: { id: pullRequestId },
     include: { repository: true },
@@ -290,21 +293,25 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
       );
     }
 
-    log("Running docker compose up -d --build...");
+    const composeFiles = ["compose", "-f", repo.composePath, "-f", OVERRIDE_FILE, "-p", project];
+
+    // `docker compose up` には --no-cache がないため、キャッシュ破棄時は先に
+    // `build --no-cache` でイメージを作り直してから up する(issue #20)。
+    if (noCache) {
+      log("Running docker compose build --no-cache...");
+      const buildCode = await runCommand("docker", [...composeFiles, "build", "--no-cache"], {
+        cwd: dir,
+        onLine: log,
+        mask,
+        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+      });
+      if (buildCode !== 0) throw new Error(`docker compose build exited with code ${buildCode}`);
+    }
+
+    log(`Running docker compose up -d${noCache ? "" : " --build"}...`);
     const code = await runCommand(
       "docker",
-      [
-        "compose",
-        "-f",
-        repo.composePath,
-        "-f",
-        OVERRIDE_FILE,
-        "-p",
-        project,
-        "up",
-        "-d",
-        "--build",
-      ],
+      [...composeFiles, "up", "-d", ...(noCache ? [] : ["--build"])],
       { cwd: dir, onLine: log, mask, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
@@ -476,4 +483,20 @@ export async function restartPreview(pullRequestId: string): Promise<void> {
     await setStatus("failed");
     throw e;
   }
+}
+
+/**
+ * Prune the global Docker build cache via `docker builder prune -f`.
+ *
+ * This affects the whole Docker host, not a single preview environment. Returns
+ * the command output, whose last line is the reclaimed-space summary (issue #20).
+ */
+export async function pruneBuilderCache(): Promise<string> {
+  const lines: string[] = [];
+  const code = await runCommand("docker", ["builder", "prune", "-f"], {
+    onLine: (line) => lines.push(line),
+    timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+  });
+  if (code !== 0) throw new Error(`docker builder prune exited with code ${code}`);
+  return lines.join("\n");
 }

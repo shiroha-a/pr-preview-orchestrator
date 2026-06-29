@@ -33,6 +33,7 @@ interface GitHubPullLike {
   title: string;
   body: string | null;
   state: string;
+  draft?: boolean;
   merged_at: string | null;
   user: { login: string } | null;
   head: { ref: string; sha: string };
@@ -47,6 +48,7 @@ function mapPullToRecord(pr: GitHubPullLike) {
     title: pr.title,
     body: pr.body ?? null,
     state: pr.merged_at ? "merged" : pr.state,
+    draft: pr.draft ?? false,
     authorLogin: pr.user?.login ?? "unknown",
     headRef: pr.head.ref,
     headSha: pr.head.sha,

@@ -8,6 +8,7 @@ import { ja } from "date-fns/locale";
 import { api } from "../api/client";
 import type { PullRequestDTO, RepositoryDTO } from "../types";
 import AsyncButton from "../components/AsyncButton.vue";
+import DraftBadge from "../components/DraftBadge.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
 import PreviewStatusBadge from "../components/PreviewStatusBadge.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
@@ -90,6 +91,7 @@ function relativeTime(iso: string): string {
                   </p>
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
+                  <DraftBadge v-if="pr.draft" />
                   <PreviewStatusBadge v-if="pr.preview" :status="pr.preview.status" />
                   <PrStateBadge :state="pr.state" />
                 </div>

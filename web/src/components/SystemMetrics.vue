@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { Trash2 } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { SystemMetrics } from "../types";
@@ -32,6 +33,29 @@ async function load() {
     metrics.value = await api.getMetrics();
   } catch {
     // 一時的なエラーは無視(次のポーリングで回復)
+  }
+}
+
+const pruning = ref(false);
+const pruneResult = ref<string | null>(null);
+const pruneError = ref<string | null>(null);
+
+// Dockerビルドキャッシュを全削除する(ホスト全体・全プロジェクト共通。issue #20)。
+async function pruneCache() {
+  if (!confirm("Dockerのビルドキャッシュを削除しますか?(ホスト全体に影響します)")) return;
+  pruning.value = true;
+  pruneResult.value = null;
+  pruneError.value = null;
+  try {
+    const { output } = await api.pruneBuilderCache();
+    // 出力末尾の "Total reclaimed space: ..." 行を要約として表示する。
+    const summary = output.split("\n").filter(Boolean).pop();
+    pruneResult.value = summary ?? "ビルドキャッシュを削除しました";
+    await load();
+  } catch (e) {
+    pruneError.value = e instanceof Error ? e.message : "削除に失敗しました";
+  } finally {
+    pruning.value = false;
   }
 }
 
@@ -120,6 +144,22 @@ onUnmounted(() => {
           <div class="h-4 w-1/3 rounded bg-gray-100 dark:bg-gray-800"></div>
         </div>
       </template>
+
+      <!-- Dockerビルドキャッシュの手動削除(issue #20)。 -->
+      <div
+        class="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-2 dark:border-gray-800"
+      >
+        <button
+          class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          :disabled="pruning"
+          @click="pruneCache"
+        >
+          <Trash2 class="h-3.5 w-3.5" />
+          {{ pruning ? "削除中..." : "ビルドキャッシュを削除" }}
+        </button>
+        <span v-if="pruneResult" class="text-xs text-green-600">{{ pruneResult }}</span>
+        <span v-if="pruneError" class="text-xs text-red-600">{{ pruneError }}</span>
+      </div>
     </div>
   </BaseCard>
 </template>
