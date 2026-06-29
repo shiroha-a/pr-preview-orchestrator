@@ -87,14 +87,15 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <div
-          v-if="metrics.containers.length > 0"
-          class="border-t border-gray-100 pt-2 dark:border-gray-800"
-        >
-          <div class="mb-1 text-xs font-medium text-gray-500">
+        <!-- 件数で高さが変わるため既定で折りたたみ、見出しのみ常時表示して高さを固定する。 -->
+        <details class="border-t border-gray-100 pt-2 dark:border-gray-800">
+          <summary class="cursor-pointer text-xs font-medium text-gray-500 select-none">
             プレビューコンテナ ({{ metrics.containers.length }})
-          </div>
-          <div class="space-y-1">
+          </summary>
+          <div class="mt-2 space-y-1">
+            <p v-if="metrics.containers.length === 0" class="text-xs text-gray-400">
+              稼働中のコンテナはありません。
+            </p>
             <div
               v-for="cont in metrics.containers"
               :key="cont.name"
@@ -106,7 +107,7 @@ onUnmounted(() => {
               </span>
             </div>
           </div>
-        </div>
+        </details>
       </template>
 
       <!-- 読み込み中: メモリ/ディスク行と同じ高さのプレースホルダで枠を固定する。 -->
@@ -114,6 +115,9 @@ onUnmounted(() => {
         <div v-for="n in 2" :key="n" class="space-y-1" aria-hidden="true">
           <div class="h-4 w-1/3 rounded bg-gray-100 dark:bg-gray-800"></div>
           <div class="h-2 rounded-full bg-gray-100 dark:bg-gray-800"></div>
+        </div>
+        <div class="border-t border-gray-100 pt-2 dark:border-gray-800" aria-hidden="true">
+          <div class="h-4 w-1/3 rounded bg-gray-100 dark:bg-gray-800"></div>
         </div>
       </template>
     </div>
