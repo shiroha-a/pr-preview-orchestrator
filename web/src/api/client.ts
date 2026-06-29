@@ -7,6 +7,7 @@ import type {
   PullRequestDTO,
   RepositoryDTO,
   RewriteRule,
+  SystemMetrics,
 } from "../types";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -33,6 +34,8 @@ export interface RepoSettingsInput {
 
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
+
+  getMetrics: () => request<SystemMetrics>("/metrics"),
 
   getPreviews: () => request<{ previews: PreviewListItem[] }>("/preview"),
 

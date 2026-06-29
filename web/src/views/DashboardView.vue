@@ -5,6 +5,7 @@ import { ArrowRight, ExternalLink, GitPullRequest } from "lucide-vue-next";
 import { api } from "../api/client";
 import type { PreviewListItem, RepositoryDTO } from "../types";
 import PreviewStatusBadge from "../components/PreviewStatusBadge.vue";
+import SystemMetrics from "../components/SystemMetrics.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 
 const loading = ref(true);
@@ -38,6 +39,8 @@ onMounted(load);
       <h1 class="text-xl font-semibold">ダッシュボード</h1>
       <p class="mt-1 text-sm text-gray-500">GitHub PRごとのプレビュー環境を管理します。</p>
     </div>
+
+    <SystemMetrics />
 
     <p v-if="loading" class="text-sm text-gray-500">読み込み中...</p>
     <p v-else-if="error" class="text-sm text-red-600">{{ error }}</p>

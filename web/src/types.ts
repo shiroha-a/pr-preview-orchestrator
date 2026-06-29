@@ -78,6 +78,20 @@ export interface CommentDTO {
   line: number | null;
 }
 
+export interface ContainerStat {
+  name: string;
+  cpu: string;
+  mem: string;
+  memUsage: string;
+}
+
+export interface SystemMetrics {
+  memory: { total: number; used: number; free: number };
+  disk: { total: number; used: number; free: number };
+  loadavg: number[];
+  containers: ContainerStat[];
+}
+
 export interface AppConfig {
   tokenSet: boolean;
   webhookSecretSet: boolean;
