@@ -43,7 +43,8 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v !== "false"),
 
-  // Timeout (ms) for long-running build commands (docker compose up).
+  // Idle timeout (ms) for build commands: abort only after this long with no
+  // output. Large builds keep running as long as they keep producing output.
   PREVIEW_BUILD_TIMEOUT_MS: z.coerce.number().int().default(600000),
 
   // Directory of the built web SPA, served by Hono in production (relative to server/).

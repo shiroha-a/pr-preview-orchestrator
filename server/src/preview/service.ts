@@ -40,14 +40,32 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { cwd: options.cwd });
 
-    const timer = options.timeoutMs
-      ? setTimeout(() => {
-          child.kill("SIGKILL");
-          reject(new Error(`Command timed out after ${options.timeoutMs}ms: ${command}`));
-        }, options.timeoutMs)
-      : null;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    // アイドルタイムアウト: 出力が一定時間途切れたときだけ打ち切る。巨大ビルドでも
+    // 進捗(出力)がある限りタイムアウトしない(issue #14)。
+    const armTimer = () => {
+      if (!options.timeoutMs) return;
+      clearTimer();
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        child.kill("SIGKILL");
+        reject(
+          new Error(`Command timed out after ${options.timeoutMs}ms with no output: ${command}`),
+        );
+      }, options.timeoutMs);
+    };
+    armTimer();
 
     const handle = (buf: Buffer) => {
+      armTimer();
       let text = buf.toString();
       for (const secret of options.mask ?? []) {
         if (secret) text = text.split(secret).join("***");
@@ -60,11 +78,15 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
     child.stdout.on("data", handle);
     child.stderr.on("data", handle);
     child.on("error", (err) => {
-      if (timer) clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      clearTimer();
       reject(err);
     });
     child.on("close", (code) => {
-      if (timer) clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      clearTimer();
       resolve(code ?? 0);
     });
   });
