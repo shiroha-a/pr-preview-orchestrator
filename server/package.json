@@ -9,6 +9,8 @@
     "build": "prisma generate && tsup",
     "postinstall": "prisma generate",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
@@ -35,6 +37,7 @@
     "@types/node": "^22.10.2",
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.9"
   }
 }
