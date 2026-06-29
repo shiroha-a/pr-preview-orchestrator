@@ -8,6 +8,10 @@ function dbUrl(): string {
   return `file:./test.${process.pid}.db`;
 }
 
+export function basicAuthHeader(user: string, pass: string): string {
+  return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
+}
+
 export function createTestPrisma(): PrismaClient {
   const adapter = new PrismaBetterSqlite3({ url: dbUrl() });
   return new PrismaClient({ adapter });

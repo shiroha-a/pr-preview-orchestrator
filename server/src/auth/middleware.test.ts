@@ -3,7 +3,13 @@ import { Hono } from "hono";
 
 import { dbBasicAuth, setCachedUserCount } from "./middleware";
 import { hashPassword } from "./password";
-import { createTestPrisma, setupTestDb, truncateAll, cleanupTestDb } from "../test/helpers";
+import {
+  basicAuthHeader,
+  createTestPrisma,
+  setupTestDb,
+  truncateAll,
+  cleanupTestDb,
+} from "../test/helpers";
 
 const prisma = createTestPrisma();
 
@@ -19,10 +25,6 @@ beforeEach(async () => {
   await truncateAll(prisma);
   setCachedUserCount(null);
 });
-
-function basicAuthHeader(user: string, pass: string): string {
-  return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
-}
 
 describe("dbBasicAuth", () => {
   it("ユーザー0件時は認証をスキップする", async () => {

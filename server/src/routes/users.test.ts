@@ -4,7 +4,13 @@ import { Hono } from "hono";
 import { createUsersRoutes } from "./users";
 import { hashPassword } from "../auth/password";
 import { setCachedUserCount, dbBasicAuth } from "../auth/middleware";
-import { createTestPrisma, setupTestDb, truncateAll, cleanupTestDb } from "../test/helpers";
+import {
+  basicAuthHeader,
+  createTestPrisma,
+  setupTestDb,
+  truncateAll,
+  cleanupTestDb,
+} from "../test/helpers";
 
 const prisma = createTestPrisma();
 
@@ -20,10 +26,6 @@ beforeEach(async () => {
   await truncateAll(prisma);
   setCachedUserCount(null);
 });
-
-function basicAuthHeader(user: string, pass: string): string {
-  return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
-}
 
 function createApp() {
   const app = new Hono();
@@ -121,7 +123,7 @@ describe("POST /api/users", () => {
 
 describe("DELETE /api/users/:id", () => {
   it("ユーザーを削除できる", async () => {
-    const admin = await createUser("admin", "pass");
+    await createUser("admin", "pass");
     const op = await createUser("op", "op");
     setCachedUserCount(2);
 
@@ -147,17 +149,25 @@ describe("DELETE /api/users/:id", () => {
     expect(res.status).toBe(403);
   });
 
-  it("最後の1人は削除できない（400）", async () => {
+  it("最後の1人かつ自分自身の場合は403", async () => {
     const admin = await createUser("admin", "pass");
     setCachedUserCount(1);
 
     const app = createApp();
-    // 自分自身ではないユーザーとして削除しようとしても最後の1人なので400
     const res = await app.request(`/api/users/${admin.id}`, {
       method: "DELETE",
       headers: { Authorization: basicAuthHeader("admin", "pass") },
     });
-    expect(res.status).toBe(403); // 自分自身が最後 ⇒ 自分自身チェックが先にヒット
+    expect(res.status).toBe(403);
+  });
+
+  it("最後の1人は削除できない（400）", async () => {
+    const admin = await createUser("admin", "pass");
+    setCachedUserCount(1);
+
+    const app = new Hono().route("/api/users", createUsersRoutes(prisma));
+    const res = await app.request(`/api/users/${admin.id}`, { method: "DELETE" });
+    expect(res.status).toBe(400);
   });
 
   it("存在しないユーザーは404", async () => {

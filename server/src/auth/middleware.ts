@@ -14,8 +14,8 @@ export async function initAuthCache(): Promise<void> {
 }
 
 /** 作成・削除後にキャッシュを更新する。 */
-export async function refreshAuthCache(): Promise<void> {
-  cachedUserCount = await prisma.user.count();
+export async function refreshAuthCache(p: PrismaClient = prisma): Promise<void> {
+  cachedUserCount = await p.user.count();
 }
 
 /** 他モジュールから参照用。 */

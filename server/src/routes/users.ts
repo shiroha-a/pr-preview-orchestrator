@@ -48,7 +48,7 @@ export function createUsersRoutes(p: PrismaClient = prisma) {
         select: { id: true, username: true, createdAt: true, updatedAt: true },
       });
 
-      await refreshAuthCache();
+      await refreshAuthCache(p);
       return c.json({ user }, 201);
     } catch (e) {
       // UNIQUE 制約違反（並行作成）→ 409
@@ -72,32 +72,26 @@ export function createUsersRoutes(p: PrismaClient = prisma) {
     const id = c.req.param("id");
     const authUsername = c.get("authUsername");
 
-    try {
-      await p.$transaction(async (tx) => {
-        const target = await tx.user.findUnique({ where: { id } });
-        if (!target) {
-          throw new HTTPException(404, { message: "user not found" });
-        }
+    await p.$transaction(async (tx) => {
+      const target = await tx.user.findUnique({ where: { id } });
+      if (!target) {
+        throw new HTTPException(404, { message: "user not found" });
+      }
 
-        if (authUsername && target.username === authUsername) {
-          throw new HTTPException(403, { message: "cannot delete yourself" });
-        }
+      if (authUsername && target.username === authUsername) {
+        throw new HTTPException(403, { message: "cannot delete yourself" });
+      }
 
-        const count = await tx.user.count();
-        if (count <= 1) {
-          throw new HTTPException(400, { message: "cannot delete the last user" });
-        }
+      const count = await tx.user.count();
+      if (count <= 1) {
+        throw new HTTPException(400, { message: "cannot delete the last user" });
+      }
 
-        await tx.user.delete({ where: { id } });
-      });
+      await tx.user.delete({ where: { id } });
+    });
 
-      await refreshAuthCache();
-      return c.json({ ok: true });
-    } catch (err) {
-      // tx 内で投げた HTTPException はそのまま再送する
-      if (err instanceof HTTPException) throw err;
-      throw err;
-    }
+    await refreshAuthCache(p);
+    return c.json({ ok: true });
   });
 
   return usersRoutes;
