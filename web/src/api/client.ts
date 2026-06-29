@@ -47,6 +47,9 @@ export const api = {
       body: JSON.stringify({ owner, name }),
     }),
 
+  deleteRepository: (owner: string, name: string) =>
+    request<{ ok: boolean }>(`/repositories/${owner}/${name}`, { method: "DELETE" }),
+
   getRepo: (owner: string, name: string) =>
     request<{ repository: RepositoryDTO }>(`/repositories/${owner}/${name}`),
 

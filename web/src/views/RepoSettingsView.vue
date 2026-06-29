@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useRoute } from "vue-router";
-import { Plus, Trash2 } from "lucide-vue-next";
+import { useRoute, useRouter } from "vue-router";
+import { Download, Plus, Trash2, Upload } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { OverlayFile, RewriteRule } from "../types";
@@ -9,6 +9,7 @@ import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 
 const route = useRoute();
+const router = useRouter();
 const owner = route.params.owner as string;
 const name = route.params.name as string;
 
@@ -16,6 +17,7 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const saving = ref(false);
 const saved = ref(false);
+const deleting = ref(false);
 
 const composePath = ref("docker-compose.yml");
 const webService = ref("");
@@ -71,24 +73,85 @@ function removeOverlay(index: number) {
   overlays.value.splice(index, 1);
 }
 
+function currentSettings() {
+  return {
+    composePath: composePath.value.trim() || "docker-compose.yml",
+    webService: webService.value.trim() || null,
+    internalPort: internalPort.value ? Number(internalPort.value) : null,
+    fileRewrites: rules.value.filter((r) => r.file.trim() && r.pattern.trim()),
+    overlayFiles: overlays.value.filter((o) => o.path.trim()),
+    resetVolumes: resetVolumes.value,
+  };
+}
+
 async function save() {
   saving.value = true;
   error.value = null;
   saved.value = false;
   try {
-    await api.updateRepoSettings(owner, name, {
-      composePath: composePath.value.trim() || "docker-compose.yml",
-      webService: webService.value.trim() || null,
-      internalPort: internalPort.value ? Number(internalPort.value) : null,
-      fileRewrites: rules.value.filter((r) => r.file.trim() && r.pattern.trim()),
-      overlayFiles: overlays.value.filter((o) => o.path.trim()),
-      resetVolumes: resetVolumes.value,
-    });
+    await api.updateRepoSettings(owner, name, currentSettings());
     saved.value = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "保存に失敗しました";
   } finally {
     saving.value = false;
+  }
+}
+
+// --- 設定のエクスポート / インポート(issue #13) ---
+function exportSettings() {
+  const blob = new Blob([JSON.stringify(currentSettings(), null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${owner}-${name}-preview-settings.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importSettings(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result as string) as Record<string, unknown>;
+      if (typeof data.composePath === "string") composePath.value = data.composePath;
+      webService.value = typeof data.webService === "string" ? data.webService : "";
+      internalPort.value = data.internalPort != null ? String(data.internalPort as number) : "";
+      resetVolumes.value = Boolean(data.resetVolumes);
+      rules.value = Array.isArray(data.fileRewrites) ? (data.fileRewrites as RewriteRule[]) : [];
+      overlays.value = Array.isArray(data.overlayFiles) ? (data.overlayFiles as OverlayFile[]) : [];
+      saved.value = false;
+      error.value = null;
+    } catch {
+      error.value = "インポートに失敗しました(JSONを確認してください)";
+    }
+  };
+  reader.readAsText(file);
+  input.value = "";
+}
+
+// --- リポジトリの削除(issue #12) ---
+async function deleteRepo() {
+  if (
+    !window.confirm(
+      `${owner}/${name} を管理対象から削除します。プレビュー環境(コンテナ・workspace)も破棄されます。よろしいですか?`,
+    )
+  ) {
+    return;
+  }
+  deleting.value = true;
+  error.value = null;
+  try {
+    await api.deleteRepository(owner, name);
+    await router.push("/");
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "削除に失敗しました";
+    deleting.value = false;
   }
 }
 
@@ -217,7 +280,18 @@ const textareaClass =
           <span> 起動のたびにDockerボリュームを初期化する(DB・ファイル等をリセット) </span>
         </label>
 
-        <div class="flex items-center justify-end gap-3">
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <label
+            class="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-gray-300 px-3 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            <Upload class="h-4 w-4" />
+            インポート
+            <input type="file" accept="application/json" class="hidden" @change="importSettings" />
+          </label>
+          <BaseButton type="button" variant="secondary" size="sm" @click="exportSettings">
+            <Download class="h-4 w-4" />
+            エクスポート
+          </BaseButton>
           <span v-if="saved" class="text-xs text-green-600">保存しました</span>
           <span v-if="error" class="text-xs text-red-600">{{ error }}</span>
           <BaseButton type="submit" :disabled="saving">
@@ -225,6 +299,21 @@ const textareaClass =
           </BaseButton>
         </div>
       </form>
+    </BaseCard>
+
+    <BaseCard v-if="!loading" class="border-red-200 dark:border-red-900/50">
+      <div class="flex items-center justify-between gap-3 p-4">
+        <div class="text-sm">
+          <p class="font-medium text-red-700 dark:text-red-400">リポジトリを削除</p>
+          <p class="mt-0.5 text-xs text-gray-500">
+            プレビュー環境(コンテナ・workspace)とすべての設定・キャッシュを削除し、管理対象から外します。
+          </p>
+        </div>
+        <BaseButton variant="danger" size="sm" :disabled="deleting" @click="deleteRepo">
+          <Trash2 class="h-4 w-4" />
+          {{ deleting ? "削除中..." : "削除" }}
+        </BaseButton>
+      </div>
     </BaseCard>
   </div>
 </template>

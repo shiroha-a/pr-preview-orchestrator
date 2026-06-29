@@ -10,7 +10,7 @@ import {
 } from "../github/pulls";
 import { addRepository } from "../github/repositories";
 import { enqueueJob } from "../jobs/queue";
-import { composeProjectName } from "../preview/service";
+import { composeProjectName, destroyPreview } from "../preview/service";
 
 export const repositoriesRoutes = new Hono();
 
@@ -55,6 +55,31 @@ repositoriesRoutes.get("/:owner/:name", async (c) => {
   const repository = await findRepo(owner, name);
   if (!repository) return c.json({ error: "Repository not found" }, 404);
   return c.json({ repository });
+});
+
+// Remove a repository: tear down previews then delete all data (issue #12).
+repositoriesRoutes.delete("/:owner/:name", async (c) => {
+  const { owner, name } = c.req.param();
+  const repository = await prisma.repository.findUnique({
+    where: { owner_name: { owner, name } },
+    include: { pullRequests: { include: { preview: true } } },
+  });
+  if (!repository) return c.json({ error: "Repository not found" }, 404);
+
+  // 稼働中のプレビューを破棄(コンテナ・ボリューム・workspace・トンネルを片付ける)。
+  for (const pr of repository.pullRequests) {
+    if (pr.preview) {
+      try {
+        await destroyPreview(pr.id);
+      } catch {
+        // best-effort: 失敗しても削除は続行する。
+      }
+    }
+  }
+
+  // DB から削除(PullRequest / PreviewEnvironment / 設定は cascade)。
+  await prisma.repository.delete({ where: { id: repository.id } });
+  return c.json({ ok: true });
 });
 
 const rewriteRuleSchema = z.object({
