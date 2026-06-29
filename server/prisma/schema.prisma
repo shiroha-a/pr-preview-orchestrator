@@ -50,6 +50,9 @@ model PullRequest {
   baseRef      String
   htmlUrl      String?
   prUpdatedAt  DateTime
+  // Labels (JSON array of { name, color }) and milestone title (issue #24).
+  labels       String?
+  milestone    String?
   // Cached diff / comments to reduce GitHub API calls (issue #10).
   diffCache     String?
   commentsCache String?

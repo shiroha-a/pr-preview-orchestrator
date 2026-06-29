@@ -12,6 +12,11 @@ export interface OverlayFile {
   content: string;
 }
 
+export interface PrLabel {
+  name: string;
+  color: string;
+}
+
 export interface RepositoryDTO {
   id: string;
   owner: string;
@@ -63,6 +68,9 @@ export interface PullRequestDTO {
   baseRef: string;
   htmlUrl: string | null;
   prUpdatedAt: string;
+  // JSON-encoded PrLabel[] and milestone title; parsed on display (issue #24).
+  labels: string | null;
+  milestone: string | null;
   preview?: PreviewDTO | null;
 }
 

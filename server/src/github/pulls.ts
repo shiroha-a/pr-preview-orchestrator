@@ -40,9 +40,16 @@ interface GitHubPullLike {
   base: { ref: string };
   html_url: string;
   updated_at: string;
+  labels?: Array<{ name?: string; color?: string }>;
+  milestone?: { title: string } | null;
 }
 
 function mapPullToRecord(pr: GitHubPullLike) {
+  // Labels をUI表示に必要な name/color のみに絞ってJSON文字列で保持する(issue #24)。
+  const labels = (pr.labels ?? [])
+    .filter((l): l is { name: string; color?: string } => Boolean(l.name))
+    .map((l) => ({ name: l.name, color: l.color ?? "888888" }));
+
   return {
     number: pr.number,
     title: pr.title,
@@ -55,6 +62,8 @@ function mapPullToRecord(pr: GitHubPullLike) {
     baseRef: pr.base.ref,
     htmlUrl: pr.html_url,
     prUpdatedAt: new Date(pr.updated_at),
+    labels: labels.length > 0 ? JSON.stringify(labels) : null,
+    milestone: pr.milestone?.title ?? null,
   };
 }
 

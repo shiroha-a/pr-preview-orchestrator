@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { Settings } from "lucide-vue-next";
+import { Milestone, Settings } from "lucide-vue-next";
 import { formatDistanceToNow } from "date-fns";
 import { ja } from "date-fns/locale";
 
 import { api } from "../api/client";
-import type { PullRequestDTO, RepositoryDTO } from "../types";
+import type { PrLabel, PullRequestDTO, RepositoryDTO } from "../types";
 import AsyncButton from "../components/AsyncButton.vue";
 import DraftBadge from "../components/DraftBadge.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
@@ -42,6 +42,16 @@ const syncPulls = () => api.syncPulls(owner, name);
 
 function relativeTime(iso: string): string {
   return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: ja });
+}
+
+// labels はJSON文字列で保存されているため表示時にparseする(issue #24)。
+function parseLabels(raw: string | null): PrLabel[] {
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as PrLabel[];
+  } catch {
+    return [];
+  }
 }
 </script>
 
@@ -89,6 +99,30 @@ function relativeTime(iso: string): string {
                   <p class="mt-0.5 text-xs text-gray-500">
                     {{ pr.authorLogin }} ・ {{ relativeTime(pr.prUpdatedAt) }}
                   </p>
+                  <!-- Labels / Milestone(issue #24) -->
+                  <div
+                    v-if="parseLabels(pr.labels).length || pr.milestone"
+                    class="mt-1.5 flex flex-wrap items-center gap-1.5"
+                  >
+                    <span
+                      v-for="label in parseLabels(pr.labels)"
+                      :key="label.name"
+                      class="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300"
+                    >
+                      <span
+                        class="h-2 w-2 rounded-full"
+                        :style="{ backgroundColor: `#${label.color}` }"
+                      />
+                      {{ label.name }}
+                    </span>
+                    <span
+                      v-if="pr.milestone"
+                      class="inline-flex items-center gap-1 text-xs text-gray-500"
+                    >
+                      <Milestone class="h-3 w-3" />
+                      {{ pr.milestone }}
+                    </span>
+                  </div>
                 </div>
                 <div class="flex shrink-0 items-center gap-2">
                   <DraftBadge v-if="pr.draft" />
