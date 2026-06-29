@@ -7,6 +7,7 @@ import { prisma } from "../db/client";
 import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
+import { startLogStream, stopLogStream } from "./logstream";
 import { allocateHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
@@ -310,6 +311,15 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
 
     await setStatus("running", { url, hostPort });
     log(`Preview is running at ${url}`);
+
+    // 実行時ログのストリーミングを開始(ビルドログに続けてSSE配信。issue #16)。
+    startLogStream({
+      previewId,
+      dir,
+      composePath: repo.composePath,
+      overrideFile: OVERRIDE_FILE,
+      project,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     log(`ERROR: ${message}`);
@@ -338,7 +348,8 @@ export async function destroyPreview(pullRequestId: string): Promise<void> {
     data: { status: "stopping" },
   });
 
-  // Stop the Cloudflare tunnel first.
+  // Stop the runtime log stream and the Cloudflare tunnel first.
+  stopLogStream(previewId);
   stopTunnel(previewId);
 
   try {
@@ -451,6 +462,14 @@ export async function restartPreview(pullRequestId: string): Promise<void> {
 
     await setStatus("running", { url });
     log(`Preview restarted at ${url}`);
+
+    startLogStream({
+      previewId,
+      dir,
+      composePath: repo.composePath,
+      overrideFile: OVERRIDE_FILE,
+      project: preview.composeProject,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     log(`ERROR: ${message}`);
