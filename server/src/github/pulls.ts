@@ -59,13 +59,15 @@ function mapPullToRecord(pr: GitHubPullLike) {
 /** Fetch all pull requests for a repository from GitHub and cache them. */
 export async function syncPullRequests(repo: RepoRef): Promise<number> {
   const octokit = getOctokit();
-  const pulls = await octokit.paginate("GET /repos/{owner}/{repo}/pulls", {
+  // 巨大リポジトリでのハング(全件取得 + better-sqlite3 の同期I/Oによるイベントループ
+  // ブロック)を避けるため、最近更新された最大100件(1ページ)だけ同期する。paginate は使わない。
+  const { data: pulls } = await octokit.rest.pulls.list({
     owner: repo.owner,
     repo: repo.name,
     state: "all",
     sort: "updated",
     direction: "desc",
-    per_page: 50,
+    per_page: 100,
   });
 
   for (const pr of pulls) {
