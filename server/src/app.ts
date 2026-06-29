@@ -11,7 +11,7 @@ import { env, hasGitHubToken } from "./env";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
-import { usersRoutes } from "./routes/users";
+import { createUsersRoutes } from "./routes/users";
 import { webhookRoutes } from "./routes/webhook";
 
 /** Build the Hono application with all routes mounted. */
@@ -46,7 +46,7 @@ export function createApp() {
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);
   app.route("/api/metrics", metricsRoutes);
-  app.route("/api/users", usersRoutes);
+  app.route("/api/users", createUsersRoutes());
 
   // Serve the built web SPA in production (only when web/dist exists, so the
   // dev server is unaffected).
