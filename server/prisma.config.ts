@@ -7,6 +7,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env.DATABASE_URL,
+    // Fall back to a local SQLite file so migrations work without a .env file.
+    url: process.env.DATABASE_URL ?? "file:./dev.db",
   },
 });

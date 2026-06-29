@@ -45,10 +45,30 @@ npm install --include=dev
 # 2. データベースを初期化(SQLite)
 npm run db:migrate
 
-# 3. サーバーの環境変数を設定(任意)
+# 3. (任意)サーバーの環境変数を設定
+#    .env が無くてもデフォルト値で動作します(公開API・SQLite: file:./dev.db)。
+#    private リポジトリ・Webhook・Basic認証を使う場合に設定します。
 cp server/.env.example server/.env
-#    公開リポジトリだけならそのままでも動作します。
+#    必要に応じて server/.env を編集してください。
 ```
+
+> 補足: `npm install` 時に Prisma クライアントが自動生成され(`postinstall`)、`npm run build` でも生成されます。
+> `.env` が無い場合、データベースは `file:./dev.db` にフォールバックします。
+
+## 環境変数
+
+`server/.env`(`server/.env.example` をコピーして作成)で設定します。**すべて任意**で、未設定でも動作します。
+
+| 変数                            | 説明                         | デフォルト         |
+| ------------------------------- | ---------------------------- | ------------------ |
+| `DATABASE_URL`                  | SQLite のパス                | `file:./dev.db`    |
+| `API_PORT`                      | API サーバーのポート         | `8787`             |
+| `GITHUB_TOKEN`                  | PAT(private / レート緩和)    | (なし=公開APIのみ) |
+| `GITHUB_WEBHOOK_SECRET`         | Webhook 署名検証             | (なし)             |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | 管理画面/APIの Basic 認証    | (なし=認証なし)    |
+| `PREVIEW_TUNNEL`                | Cloudflare トンネルの有効化  | `true`             |
+| `WORKSPACES_DIR`                | リポジトリの clone 先        | `./workspaces`     |
+| `PREVIEW_PORT_MIN` / `..._MAX`  | プレビューのホストポート範囲 | `13000` / `13999`  |
 
 ## 起動
 
