@@ -1,0 +1,34 @@
+# Example docker-compose.yml for a preview target repository.
+#
+# Place this (or your own) at the repository root. Then, in the orchestrator's
+# repository preview settings, set:
+#   - Compose file path : docker-compose.yml
+#   - Web service       : web
+#   - Internal port     : 3000
+#
+# The orchestrator generates an override that maps a dynamic host port to the
+# web service's internal port using Compose's `!override`, so any fixed `ports`
+# below are replaced automatically (no conflict across simultaneous previews).
+
+services:
+  web:
+    # build context = the repository root (= the clone directory).
+    # Existing `build: .` / `build: ./docker` work as-is.
+    build: .
+    environment:
+      # If your app reads PORT, set it to the internal port configured above.
+      - PORT=3000
+    # `ports` は書かなくてOK(オーケストレーターが動的に割り当てます)。
+    # 書いた場合も `!override` で置き換えられます。
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: password
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:

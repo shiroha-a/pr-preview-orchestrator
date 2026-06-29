@@ -119,7 +119,10 @@ interface WriteOverrideOptions {
 /** Write a compose override mapping the web service to a dynamic host port. */
 function writeOverride(opts: WriteOverrideOptions): void {
   const { dir, webService, hostPort, internalPort } = opts;
-  const yaml = `services:\n  ${webService}:\n    ports:\n      - "${hostPort}:${internalPort}"\n`;
+  // `!override` replaces any existing `ports` on the service, so a repository's
+  // existing docker-compose.yml (even with fixed host ports) can be reused
+  // without conflicts across simultaneous previews.
+  const yaml = `services:\n  ${webService}:\n    ports: !override\n      - "${hostPort}:${internalPort}"\n`;
   writeFileSync(join(dir, OVERRIDE_FILE), yaml);
 }
 
