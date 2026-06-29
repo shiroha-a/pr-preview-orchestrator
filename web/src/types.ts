@@ -7,6 +7,11 @@ export interface RewriteRule {
   flags?: string;
 }
 
+export interface OverlayFile {
+  path: string;
+  content: string;
+}
+
 export interface RepositoryDTO {
   id: string;
   owner: string;
@@ -16,6 +21,7 @@ export interface RepositoryDTO {
   webService: string | null;
   internalPort: number | null;
   fileRewrites: string | null;
+  overlayFiles: string | null;
   resetVolumes: boolean;
   createdAt: string;
   updatedAt: string;

@@ -64,11 +64,17 @@ const rewriteRuleSchema = z.object({
   flags: z.string().optional(),
 });
 
+const overlayFileSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+});
+
 const settingsSchema = z.object({
   composePath: z.string().min(1),
   webService: z.string().nullable().optional(),
   internalPort: z.coerce.number().int().positive().nullable().optional(),
   fileRewrites: z.array(rewriteRuleSchema).optional(),
+  overlayFiles: z.array(overlayFileSchema).optional(),
   resetVolumes: z.boolean().optional(),
 });
 
@@ -89,6 +95,7 @@ repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
       webService: parsed.data.webService ?? null,
       internalPort: parsed.data.internalPort ?? null,
       fileRewrites: parsed.data.fileRewrites ? JSON.stringify(parsed.data.fileRewrites) : null,
+      overlayFiles: parsed.data.overlayFiles ? JSON.stringify(parsed.data.overlayFiles) : null,
       resetVolumes: parsed.data.resetVolumes ?? false,
     },
   });

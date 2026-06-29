@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   CommentDTO,
+  OverlayFile,
   PreviewDTO,
   PreviewListItem,
   PullRequestDTO,
@@ -26,6 +27,7 @@ export interface RepoSettingsInput {
   webService: string | null;
   internalPort: number | null;
   fileRewrites: RewriteRule[];
+  overlayFiles: OverlayFile[];
   resetVolumes: boolean;
 }
 

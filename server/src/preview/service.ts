@@ -8,6 +8,7 @@ import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { allocateHostPort } from "./ports";
+import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { startTunnel, stopTunnel } from "./tunnel";
 
@@ -218,20 +219,26 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
       }
     }
 
+    const templateVars = {
+      PREVIEW_URL: url,
+      PREVIEW_HOST: hostnameOf(url, env.PREVIEW_HOST),
+      HOST_PORT: String(hostPort),
+    };
+
+    // Write overlay files (e.g. a test-specific compose file or config from
+    // outside the target repo) into the workspace. Content supports the same
+    // template variables.
+    const overlays = parseOverlayFiles(repo.overlayFiles);
+    if (overlays.length > 0) {
+      log(`Writing ${overlays.length} overlay file(s)...`);
+      applyOverlays(dir, overlays, templateVars, log);
+    }
+
     // Apply file rewrite rules (e.g. inject the preview URL into a config file).
     const rules = parseRewriteRules(repo.fileRewrites);
     if (rules.length > 0) {
       log(`Applying ${rules.length} file rewrite rule(s)...`);
-      applyRewrites(
-        dir,
-        rules,
-        {
-          PREVIEW_URL: url,
-          PREVIEW_HOST: hostnameOf(url, env.PREVIEW_HOST),
-          HOST_PORT: String(hostPort),
-        },
-        log,
-      );
+      applyRewrites(dir, rules, templateVars, log);
     }
 
     writeOverride({ dir, webService: repo.webService, hostPort, internalPort: repo.internalPort });

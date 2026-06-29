@@ -23,6 +23,8 @@ model Repository {
   internalPort   Int?
   // File rewrite rules (JSON array) applied to the cloned repo before compose up.
   fileRewrites   String?
+  // Overlay files (JSON array) written into the cloned repo before compose up.
+  overlayFiles   String?
   // Reset Docker volumes on each (re)build to start from a clean state.
   resetVolumes   Boolean  @default(false)
   createdAt      DateTime @default(now())
