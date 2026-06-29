@@ -4,6 +4,7 @@ import { ja } from "date-fns/locale";
 
 import type { BadgeTone, CommentDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
+import MarkdownView from "./MarkdownView.vue";
 
 defineProps<{ comments: CommentDTO[] }>();
 
@@ -51,11 +52,8 @@ function reviewMeta(c: CommentDTO) {
         </div>
         <time class="text-xs text-gray-400">{{ relativeTime(c.createdAt) }}</time>
       </div>
-      <div
-        v-if="c.body"
-        class="px-3 py-2 text-sm whitespace-pre-wrap text-gray-800 dark:text-gray-200"
-      >
-        {{ c.body }}
+      <div v-if="c.body" class="px-3 py-2">
+        <MarkdownView :source="c.body" />
       </div>
     </li>
   </ul>
