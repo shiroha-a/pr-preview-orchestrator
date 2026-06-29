@@ -133,16 +133,20 @@ repositoriesRoutes.get("/:owner/:name/pulls/:number", async (c) => {
   const repository = await findRepo(owner, name);
   if (!repository) return c.json({ error: "Repository not found" }, 404);
 
+  const refresh = c.req.query("refresh") === "1";
   let pullRequest = await prisma.pullRequest.findUnique({
     where: { repositoryId_number: { repositoryId: repository.id, number } },
   });
   let loadError: string | null = null;
 
-  // GitHubから最新を取得。失敗時はDBキャッシュにフォールバックする。
-  try {
-    pullRequest = await fetchAndCachePullRequest(repository, number);
-  } catch (e) {
-    loadError = e instanceof Error ? e.message : "Failed to fetch from GitHub";
+  // キャッシュが無い、または明示更新(?refresh=1)時のみ GitHub から取得する。
+  // ページを開くたびにAPIを叩かないようにしてレート制限を抑える(issue #10)。
+  if (refresh || !pullRequest) {
+    try {
+      pullRequest = await fetchAndCachePullRequest(repository, number);
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : "Failed to fetch from GitHub";
+    }
   }
 
   if (!pullRequest) return c.json({ error: "Pull request not found" }, 404);
@@ -159,14 +163,27 @@ repositoriesRoutes.get("/:owner/:name/pulls/:number/diff", async (c) => {
   const number = Number(c.req.param("number"));
   if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
 
+  const refresh = c.req.query("refresh") === "1";
   const repository = await findRepo(owner, name);
   if (!repository) return c.json({ error: "Repository not found" }, 404);
 
+  const pr = await prisma.pullRequest.findUnique({
+    where: { repositoryId_number: { repositoryId: repository.id, number } },
+  });
+
+  // キャッシュ優先。無い or 明示更新時のみ取得して保存(issue #10)。
+  if (!refresh && pr?.diffCache != null) {
+    return c.json({ diff: pr.diffCache, cached: true });
+  }
   try {
     const diff = await fetchPullRequestDiff(repository, number);
+    if (pr) await prisma.pullRequest.update({ where: { id: pr.id }, data: { diffCache: diff } });
     return c.json({ diff });
   } catch (e) {
-    return c.json({ diff: "", error: e instanceof Error ? e.message : "Failed to fetch diff" });
+    return c.json({
+      diff: pr?.diffCache ?? "",
+      error: e instanceof Error ? e.message : "Failed to fetch diff",
+    });
   }
 });
 
@@ -175,15 +192,40 @@ repositoriesRoutes.get("/:owner/:name/pulls/:number/comments", async (c) => {
   const number = Number(c.req.param("number"));
   if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
 
+  const refresh = c.req.query("refresh") === "1";
   const repository = await findRepo(owner, name);
   if (!repository) return c.json({ error: "Repository not found" }, 404);
 
+  const pr = await prisma.pullRequest.findUnique({
+    where: { repositoryId_number: { repositoryId: repository.id, number } },
+  });
+
+  // キャッシュ優先(issue #10)。
+  if (!refresh && pr?.commentsCache != null) {
+    try {
+      return c.json({ comments: JSON.parse(pr.commentsCache) as unknown, cached: true });
+    } catch {
+      // キャッシュが壊れている場合は取得し直す。
+    }
+  }
   try {
     const comments = await fetchPullRequestComments(repository, number);
+    if (pr) {
+      await prisma.pullRequest.update({
+        where: { id: pr.id },
+        data: { commentsCache: JSON.stringify(comments) },
+      });
+    }
     return c.json({ comments });
   } catch (e) {
+    let cached: unknown = [];
+    try {
+      cached = pr?.commentsCache ? JSON.parse(pr.commentsCache) : [];
+    } catch {
+      cached = [];
+    }
     return c.json({
-      comments: [],
+      comments: cached,
       error: e instanceof Error ? e.message : "Failed to fetch comments",
     });
   }

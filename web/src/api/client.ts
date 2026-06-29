@@ -61,19 +61,19 @@ export const api = {
   syncPulls: (owner: string, name: string) =>
     request<{ count: number }>(`/repositories/${owner}/${name}/pulls/sync`, { method: "POST" }),
 
-  getPull: (owner: string, name: string, number: number) =>
+  getPull: (owner: string, name: string, number: number, refresh = false) =>
     request<{ pullRequest: PullRequestDTO; preview: PreviewDTO | null; loadError: string | null }>(
-      `/repositories/${owner}/${name}/pulls/${number}`,
+      `/repositories/${owner}/${name}/pulls/${number}${refresh ? "?refresh=1" : ""}`,
     ),
 
-  getPullDiff: (owner: string, name: string, number: number) =>
+  getPullDiff: (owner: string, name: string, number: number, refresh = false) =>
     request<{ diff: string; error?: string }>(
-      `/repositories/${owner}/${name}/pulls/${number}/diff`,
+      `/repositories/${owner}/${name}/pulls/${number}/diff${refresh ? "?refresh=1" : ""}`,
     ),
 
-  getPullComments: (owner: string, name: string, number: number) =>
+  getPullComments: (owner: string, name: string, number: number, refresh = false) =>
     request<{ comments: CommentDTO[]; error?: string }>(
-      `/repositories/${owner}/${name}/pulls/${number}/comments`,
+      `/repositories/${owner}/${name}/pulls/${number}/comments${refresh ? "?refresh=1" : ""}`,
     ),
 
   getPreview: (owner: string, name: string, number: number) =>
