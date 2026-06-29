@@ -95,7 +95,7 @@ export async function syncPullRequests(repo: RepoRef): Promise<number> {
         where: { pullRequestId: saved.id },
       });
       if (preview && ["pending", "cloning", "building", "running"].includes(preview.status)) {
-        await enqueueJob("destroy", { pullRequestId: saved.id });
+        await enqueueJob("destroy", { previewId: preview.id });
       }
     }
   }

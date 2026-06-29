@@ -3,7 +3,8 @@ import { prisma } from "../db/client";
 export type JobType = "build" | "destroy" | "restart";
 
 export interface JobPayload {
-  pullRequestId: string;
+  /** The preview environment this job operates on (PR or branch, issue #25). */
+  previewId: string;
   /** When true, rebuild Docker images without using the build cache (issue #20). */
   noCache?: boolean;
 }

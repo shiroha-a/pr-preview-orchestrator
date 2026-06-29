@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import { prisma } from "../db/client";
+import { enqueueJob } from "../jobs/queue";
 import { subscribePreview } from "../preview/events";
 import { pruneBuilderCache } from "../preview/service";
 
@@ -10,7 +11,7 @@ export const previewRoutes = new Hono();
 /** List all preview environments with their pull request and repository. */
 previewRoutes.get("/", async (c) => {
   const previews = await prisma.previewEnvironment.findMany({
-    include: { pullRequest: { include: { repository: true } } },
+    include: { pullRequest: { include: { repository: true } }, repository: true },
     orderBy: { updatedAt: "desc" },
   });
   return c.json({ previews });
@@ -27,6 +28,33 @@ previewRoutes.post("/builder-prune", async (c) => {
       500,
     );
   }
+});
+
+/** Fetch a single preview environment by id (PR or branch). */
+previewRoutes.get("/:id", async (c) => {
+  const preview = await prisma.previewEnvironment.findUnique({
+    where: { id: c.req.param("id") },
+  });
+  if (!preview) return c.json({ error: "Preview not found" }, 404);
+  return c.json({ preview });
+});
+
+/** Restart a preview's containers without rebuilding (by id; issue #25). */
+previewRoutes.post("/:id/restart", async (c) => {
+  const id = c.req.param("id");
+  const preview = await prisma.previewEnvironment.findUnique({ where: { id } });
+  if (!preview) return c.json({ error: "Preview not found" }, 404);
+  const jobId = await enqueueJob("restart", { previewId: id });
+  return c.json({ jobId, previewId: id });
+});
+
+/** Tear down a preview (by id; issue #25). */
+previewRoutes.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const preview = await prisma.previewEnvironment.findUnique({ where: { id } });
+  if (!preview) return c.json({ ok: true });
+  const jobId = await enqueueJob("destroy", { previewId: id });
+  return c.json({ jobId });
 });
 
 /** SSE stream of build logs and status changes for a preview environment. */

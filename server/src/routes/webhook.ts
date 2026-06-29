@@ -48,12 +48,12 @@ if (webhooks) {
 
     // New push: rebuild the preview if one is live.
     if (action === "synchronize" && preview && ACTIVE_STATUSES.includes(preview.status)) {
-      await enqueueJob("build", { pullRequestId: pr.id });
+      await enqueueJob("build", { previewId: preview.id });
     }
 
     // PR closed/merged: tear the preview down.
     if (action === "closed" && preview && preview.status !== "stopped") {
-      await enqueueJob("destroy", { pullRequestId: pr.id });
+      await enqueueJob("destroy", { previewId: preview.id });
     }
   });
 }

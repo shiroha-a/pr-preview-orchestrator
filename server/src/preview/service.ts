@@ -4,6 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { prisma } from "../db/client";
+import type { Prisma, Repository } from "../generated/prisma/client";
 import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
@@ -23,8 +24,84 @@ export function composeProjectName(owner: string, name: string, number: number):
   return `preview-${sanitize(owner)}-${sanitize(name)}-pr${number}`;
 }
 
-function workspaceDir(owner: string, name: string, number: number): string {
-  return resolve(env.WORKSPACES_DIR, `${sanitize(owner)}__${sanitize(name)}__pr${number}`);
+/** Compose project name for a branch-based preview (issue #25). */
+export function branchComposeProjectName(owner: string, name: string, branch: string): string {
+  return `preview-${sanitize(owner)}-${sanitize(name)}-branch-${sanitize(branch)}`;
+}
+
+function workspaceDir(slug: string): string {
+  return resolve(env.WORKSPACES_DIR, slug);
+}
+
+function prWorkspaceSlug(owner: string, name: string, number: number): string {
+  return `${sanitize(owner)}__${sanitize(name)}__pr${number}`;
+}
+
+function branchWorkspaceSlug(owner: string, name: string, branch: string): string {
+  return `${sanitize(owner)}__${sanitize(name)}__branch-${sanitize(branch)}`;
+}
+
+/** A preview row with its target relations loaded (PR and/or repository). */
+type PreviewWithTarget = Prisma.PreviewEnvironmentGetPayload<{
+  include: { pullRequest: { include: { repository: true } }; repository: true };
+}>;
+
+/** Resolved git/compose parameters needed to build a preview, for either kind. */
+interface BuildTarget {
+  repo: Repository;
+  owner: string;
+  name: string;
+  /** Ref to `git fetch origin` (e.g. `pull/12/head` or a branch name). */
+  fetchRef: string;
+  composeProject: string;
+  dir: string;
+  /** Human-readable label for logs (e.g. "PR #12" / "branch main"). */
+  label: string;
+  /** Known commit SHA up front (PR head); null for branches (resolved after clone). */
+  knownSha: string | null;
+}
+
+/** Derive the build parameters for a preview from its kind (PR or branch). */
+function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
+  if (preview.kind === "branch") {
+    const repo = preview.repository;
+    const branch = preview.branchRef;
+    if (!repo || !branch) {
+      throw new Error("ブランチプレビューにリポジトリまたはブランチ名がありません。");
+    }
+    return {
+      repo,
+      owner: repo.owner,
+      name: repo.name,
+      fetchRef: branch,
+      composeProject: branchComposeProjectName(repo.owner, repo.name, branch),
+      dir: workspaceDir(branchWorkspaceSlug(repo.owner, repo.name, branch)),
+      label: `branch ${branch}`,
+      knownSha: null,
+    };
+  }
+
+  const pr = preview.pullRequest;
+  if (!pr) throw new Error("PRプレビューにプルリクエストがありません。");
+  const repo = pr.repository;
+  return {
+    repo,
+    owner: repo.owner,
+    name: repo.name,
+    fetchRef: `pull/${pr.number}/head`,
+    composeProject: composeProjectName(repo.owner, repo.name, pr.number),
+    dir: workspaceDir(prWorkspaceSlug(repo.owner, repo.name, pr.number)),
+    label: `PR #${pr.number}`,
+    knownSha: pr.headSha,
+  };
+}
+
+/** Load a preview with the relations needed to resolve its build target. */
+function loadPreviewWithTarget(previewId: string): Promise<PreviewWithTarget | null> {
+  return prisma.previewEnvironment.findUnique({
+    where: { id: previewId },
+    include: { pullRequest: { include: { repository: true } }, repository: true },
+  });
 }
 
 interface RunOptions {
@@ -97,15 +174,19 @@ interface PrepareWorkspaceOptions {
   dir: string;
   owner: string;
   name: string;
-  number: number;
+  /** Ref to fetch from origin (e.g. `pull/12/head` or a branch name). */
+  fetchRef: string;
   /** Optional token for cloning private repositories. */
   token?: string;
   onLine: (line: string) => void;
 }
 
-/** Clone (or update) the target repository and check out the PR head. */
-async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<void> {
-  const { dir, owner, name, number, token, onLine } = opts;
+/**
+ * Clone (or update) the target repository, check out the requested ref (a PR
+ * head or a branch), and return the checked-out commit SHA.
+ */
+async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> {
+  const { dir, owner, name, fetchRef, token, onLine } = opts;
   const cloneUrl = token
     ? `https://x-access-token:${token}@github.com/${owner}/${name}.git`
     : `https://github.com/${owner}/${name}.git`;
@@ -119,18 +200,28 @@ async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<void> {
     await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], { onLine, mask });
   }
 
-  // Fetch the PR head ref (works for forks too) and check it out.
-  const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", `pull/${number}/head`], {
+  // Fetch the requested ref (PR head ref works for forks too) and check it out.
+  const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", fetchRef], {
     onLine,
     mask,
   });
-  if (fetchCode !== 0) throw new Error(`git fetch of PR #${number} failed (code ${fetchCode})`);
+  if (fetchCode !== 0) throw new Error(`git fetch of ${fetchRef} failed (code ${fetchCode})`);
 
   const checkoutCode = await runCommand("git", ["-C", dir, "checkout", "-f", "FETCH_HEAD"], {
     onLine,
     mask,
   });
   if (checkoutCode !== 0) throw new Error(`git checkout failed (code ${checkoutCode})`);
+
+  // 実際にチェックアウトしたコミットSHAを取得する(ブランチは事前にSHA不明なため)。
+  let sha = "";
+  await runCommand("git", ["-C", dir, "rev-parse", "HEAD"], {
+    onLine: (line) => {
+      const trimmed = line.trim();
+      if (trimmed) sha = trimmed;
+    },
+  });
+  return sha;
 }
 
 interface WriteOverrideOptions {
@@ -159,9 +250,10 @@ function hostnameOf(url: string, fallback: string): string {
 }
 
 /**
- * Build (or rebuild) the preview environment for a pull request.
+ * Build (or rebuild) the preview environment identified by previewId. The
+ * preview may target a pull request or a branch (issue #25).
  *
- * Order: clone the PR head, allocate a port, start the Cloudflare tunnel (so its
+ * Order: clone the ref, allocate a port, start the Cloudflare tunnel (so its
  * URL is known), apply file rewrite rules (e.g. inject the URL into a config
  * file), generate a compose override, optionally reset volumes, then
  * `docker compose up`.
@@ -169,27 +261,17 @@ function hostnameOf(url: string, fallback: string): string {
  * When `noCache` is true the images are rebuilt from scratch via
  * `docker compose build --no-cache` before starting (issue #20).
  */
-export async function buildPreview(pullRequestId: string, noCache = false): Promise<void> {
-  const pr = await prisma.pullRequest.findUnique({
-    where: { id: pullRequestId },
-    include: { repository: true },
-  });
-  if (!pr) throw new Error("Pull request not found");
-  const repo = pr.repository;
+export async function buildPreview(previewId: string, noCache = false): Promise<void> {
+  const loaded = await loadPreviewWithTarget(previewId);
+  if (!loaded) throw new Error("Preview environment not found");
+  const target = resolveBuildTarget(loaded);
+  const { repo, dir, composeProject: project } = target;
 
-  const project = composeProjectName(repo.owner, repo.name, pr.number);
-  const preview = await prisma.previewEnvironment.upsert({
-    where: { pullRequestId },
-    create: {
-      pullRequestId,
-      status: "pending",
-      composeProject: project,
-      commitSha: pr.headSha,
-    },
-    update: { status: "pending", composeProject: project, commitSha: pr.headSha, logs: "" },
+  const preview = await prisma.previewEnvironment.update({
+    where: { id: previewId },
+    data: { status: "pending", composeProject: project, commitSha: target.knownSha, logs: "" },
   });
 
-  const previewId = preview.id;
   const logBuffer: string[] = [];
   const log = (line: string) => {
     logBuffer.push(line);
@@ -219,17 +301,24 @@ export async function buildPreview(pullRequestId: string, noCache = false): Prom
     }
 
     await setStatus("cloning");
-    log(`Cloning ${repo.owner}/${repo.name} PR #${pr.number} (${pr.headSha.slice(0, 7)})...`);
+    log(`Cloning ${target.owner}/${target.name} ${target.label}...`);
 
-    const dir = workspaceDir(repo.owner, repo.name, pr.number);
-    await prepareWorkspace({
+    const sha = await prepareWorkspace({
       dir,
-      owner: repo.owner,
-      name: repo.name,
-      number: pr.number,
+      owner: target.owner,
+      name: target.name,
+      fetchRef: target.fetchRef,
       token,
       onLine: log,
     });
+    if (sha) {
+      log(`Checked out ${sha.slice(0, 7)}`);
+      // 実際にチェックアウトしたSHAを記録(ブランチは事前不明、PRも最新を反映)。
+      await prisma.previewEnvironment.update({
+        where: { id: previewId },
+        data: { commitSha: sha },
+      });
+    }
 
     const hostPort = preview.hostPort ?? (await allocateHostPort());
     log(`Allocated host port ${hostPort}`);
@@ -336,17 +425,12 @@ export async function buildPreview(pullRequestId: string, noCache = false): Prom
   }
 }
 
-/** Tear down the preview environment for a pull request and clean its workspace. */
-export async function destroyPreview(pullRequestId: string): Promise<void> {
-  const preview = await prisma.previewEnvironment.findUnique({
-    where: { pullRequestId },
-    include: { pullRequest: { include: { repository: true } } },
-  });
-  if (!preview) return;
-
-  const previewId = preview.id;
-  const repo = preview.pullRequest.repository;
-  const dir = workspaceDir(repo.owner, repo.name, preview.pullRequest.number);
+/** Tear down the preview environment (PR or branch) and clean its workspace. */
+export async function destroyPreview(previewId: string): Promise<void> {
+  const loaded = await loadPreviewWithTarget(previewId);
+  if (!loaded) return;
+  const preview = loaded;
+  const { repo, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
   emitPreviewStatus(previewId, "stopping");
@@ -403,18 +487,12 @@ export async function destroyPreview(pullRequestId: string): Promise<void> {
  * Reuses the existing Cloudflare tunnel when it is still alive; otherwise starts
  * a new one (e.g. after a server restart).
  */
-export async function restartPreview(pullRequestId: string): Promise<void> {
-  const pr = await prisma.pullRequest.findUnique({
-    where: { id: pullRequestId },
-    include: { repository: true },
-  });
-  if (!pr) throw new Error("Pull request not found");
-  const repo = pr.repository;
+export async function restartPreview(previewId: string): Promise<void> {
+  const loaded = await loadPreviewWithTarget(previewId);
+  if (!loaded) throw new Error("Preview environment not found");
+  const preview = loaded;
+  const { repo, dir } = resolveBuildTarget(loaded);
 
-  const preview = await prisma.previewEnvironment.findUnique({ where: { pullRequestId } });
-  if (!preview) throw new Error("Preview environment not found");
-
-  const previewId = preview.id;
   const logBuffer: string[] = [];
   const log = (line: string) => {
     logBuffer.push(line);
@@ -427,8 +505,6 @@ export async function restartPreview(pullRequestId: string): Promise<void> {
       data: { status, logs: logBuffer.join("\n").slice(-20000), ...extra },
     });
   };
-
-  const dir = workspaceDir(repo.owner, repo.name, pr.number);
 
   try {
     if (!existsSync(dir)) {

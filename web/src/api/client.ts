@@ -112,6 +112,30 @@ export const api = {
       method: "DELETE",
     }),
 
+  // --- Branch-based previews (issue #25) ---
+
+  getBranches: (owner: string, name: string) =>
+    request<{ branches: import("../types").BranchInfo[] }>(
+      `/repositories/${owner}/${name}/branches`,
+    ),
+
+  getBranchPreviews: (owner: string, name: string) =>
+    request<{ previews: PreviewDTO[] }>(`/repositories/${owner}/${name}/branch-previews`),
+
+  startBranchPreview: (owner: string, name: string, branch: string, noCache = false) =>
+    request<{ jobId: string; previewId: string }>(`/repositories/${owner}/${name}/branch-preview`, {
+      method: "POST",
+      body: JSON.stringify({ branch, noCache }),
+    }),
+
+  getPreviewById: (id: string) => request<{ preview: PreviewDTO | null }>(`/preview/${id}`),
+
+  restartPreviewById: (id: string) =>
+    request<{ jobId: string; previewId: string }>(`/preview/${id}/restart`, { method: "POST" }),
+
+  destroyPreviewById: (id: string) =>
+    request<{ jobId?: string; ok?: boolean }>(`/preview/${id}`, { method: "DELETE" }),
+
   getUsers: () => request<{ users: import("../types").UserDTO[] }>("/users"),
 
   createUser: (body: CreateUserInput) =>

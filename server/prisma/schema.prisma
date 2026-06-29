@@ -31,6 +31,7 @@ model Repository {
   updatedAt      DateTime @updatedAt
 
   pullRequests PullRequest[]
+  previews     PreviewEnvironment[]
 
   @@unique([owner, name])
 }
@@ -65,10 +66,15 @@ model PullRequest {
   @@unique([repositoryId, number])
 }
 
-/// An ephemeral Docker-based preview environment for a single pull request.
+/// An ephemeral Docker-based preview environment targeting a pull request or a
+/// branch of a repository (issue #25).
 model PreviewEnvironment {
   id             String   @id @default(cuid())
-  pullRequestId  String   @unique
+  // Target kind: "pr" (pullRequestId set) or "branch" (repositoryId + branchRef set).
+  kind           String   @default("pr")
+  pullRequestId  String?  @unique
+  repositoryId   String?
+  branchRef      String?
   // idle / pending / cloning / building / running / stopping / stopped / failed
   status         String   @default("idle")
   composeProject String
@@ -79,7 +85,10 @@ model PreviewEnvironment {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  pullRequest PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  pullRequest PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  repository  Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repositoryId, branchRef])
 }
 
 /// A unit of asynchronous work processed by the in-process worker.

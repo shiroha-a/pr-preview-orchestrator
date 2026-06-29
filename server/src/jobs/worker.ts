@@ -26,11 +26,11 @@ async function tick(): Promise<void> {
       try {
         const payload = JSON.parse(job.payload) as JobPayload;
         if (job.type === "build") {
-          await buildPreview(payload.pullRequestId, payload.noCache);
+          await buildPreview(payload.previewId, payload.noCache);
         } else if (job.type === "destroy") {
-          await destroyPreview(payload.pullRequestId);
+          await destroyPreview(payload.previewId);
         } else if (job.type === "restart") {
-          await restartPreview(payload.pullRequestId);
+          await restartPreview(payload.previewId);
         }
         await prisma.job.update({ where: { id: job.id }, data: { status: "done", error: null } });
       } catch (e) {

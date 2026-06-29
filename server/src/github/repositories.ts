@@ -22,3 +22,23 @@ export async function getRepositoryBySlug(owner: string, name: string) {
     where: { owner_name: { owner, name } },
   });
 }
+
+/** A branch on GitHub, with the SHA of its current tip. */
+export interface BranchInfo {
+  name: string;
+  commitSha: string;
+}
+
+/**
+ * List branches for a repository from GitHub. Used to let the user start a
+ * preview from an arbitrary branch (issue #25).
+ */
+export async function listRepositoryBranches(owner: string, name: string): Promise<BranchInfo[]> {
+  const octokit = getOctokit();
+  const branches = await octokit.paginate(octokit.rest.repos.listBranches, {
+    owner,
+    repo: name,
+    per_page: 100,
+  });
+  return branches.map((b) => ({ name: b.name, commitSha: b.commit.sha }));
+}
