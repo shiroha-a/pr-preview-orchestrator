@@ -1,5 +1,5 @@
 import { prisma } from "../db/client";
-import { buildPreview, destroyPreview } from "../preview/service";
+import { buildPreview, destroyPreview, restartPreview } from "../preview/service";
 
 import type { JobPayload } from "./queue";
 
@@ -29,6 +29,8 @@ async function tick(): Promise<void> {
           await buildPreview(payload.pullRequestId);
         } else if (job.type === "destroy") {
           await destroyPreview(payload.pullRequestId);
+        } else if (job.type === "restart") {
+          await restartPreview(payload.pullRequestId);
         }
         await prisma.job.update({ where: { id: job.id }, data: { status: "done", error: null } });
       } catch (e) {

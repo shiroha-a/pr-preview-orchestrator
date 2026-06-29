@@ -323,3 +323,20 @@ repositoriesRoutes.delete("/:owner/:name/pulls/:number/preview", async (c) => {
   const jobId = await enqueueJob("destroy", { pullRequestId: pull.id });
   return c.json({ jobId });
 });
+
+// Restart containers without rebuilding (issue #15).
+repositoriesRoutes.post("/:owner/:name/pulls/:number/preview/restart", async (c) => {
+  const { owner, name } = c.req.param();
+  const number = Number(c.req.param("number"));
+  if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
+  const pull = await findPull(owner, name, number);
+  if (!pull) return c.json({ error: "Pull request not found" }, 404);
+  const preview = await prisma.previewEnvironment.findUnique({
+    where: { pullRequestId: pull.id },
+  });
+  if (!preview) {
+    return c.json({ error: "プレビュー環境がありません。先に起動してください。" }, 400);
+  }
+  const jobId = await enqueueJob("restart", { pullRequestId: pull.id });
+  return c.json({ jobId, previewId: preview.id });
+});

@@ -66,3 +66,8 @@ export function stopTunnel(previewId: string): void {
     tunnels.delete(previewId);
   }
 }
+
+/** Whether a tunnel process is currently tracked (alive) for this preview. */
+export function isTunnelAlive(previewId: string): boolean {
+  return tunnels.has(previewId);
+}

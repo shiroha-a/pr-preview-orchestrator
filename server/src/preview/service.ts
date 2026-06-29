@@ -10,7 +10,7 @@ import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { allocateHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
-import { startTunnel, stopTunnel } from "./tunnel";
+import { isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
 
@@ -378,4 +378,83 @@ export async function destroyPreview(pullRequestId: string): Promise<void> {
     data: { status: "stopped", url: null, hostPort: null },
   });
   emitPreviewStatus(previewId, "stopped");
+}
+
+/**
+ * Restart the preview's containers without rebuilding (issue #15).
+ * Reuses the existing Cloudflare tunnel when it is still alive; otherwise starts
+ * a new one (e.g. after a server restart).
+ */
+export async function restartPreview(pullRequestId: string): Promise<void> {
+  const pr = await prisma.pullRequest.findUnique({
+    where: { id: pullRequestId },
+    include: { repository: true },
+  });
+  if (!pr) throw new Error("Pull request not found");
+  const repo = pr.repository;
+
+  const preview = await prisma.previewEnvironment.findUnique({ where: { pullRequestId } });
+  if (!preview) throw new Error("Preview environment not found");
+
+  const previewId = preview.id;
+  const logBuffer: string[] = [];
+  const log = (line: string) => {
+    logBuffer.push(line);
+    emitPreviewLog(previewId, line);
+  };
+  const setStatus = async (status: string, extra: { url?: string | null } = {}) => {
+    emitPreviewStatus(previewId, status);
+    await prisma.previewEnvironment.update({
+      where: { id: previewId },
+      data: { status, logs: logBuffer.join("\n").slice(-20000), ...extra },
+    });
+  };
+
+  const dir = workspaceDir(repo.owner, repo.name, pr.number);
+
+  try {
+    if (!existsSync(dir)) {
+      throw new Error("ワークスペースがありません。先にプレビューを起動してください。");
+    }
+
+    await setStatus("building");
+    log("Restarting containers (docker compose restart)...");
+    const code = await runCommand(
+      "docker",
+      [
+        "compose",
+        "-f",
+        repo.composePath,
+        "-f",
+        OVERRIDE_FILE,
+        "-p",
+        preview.composeProject,
+        "restart",
+      ],
+      { cwd: dir, onLine: log, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS },
+    );
+    if (code !== 0) throw new Error(`docker compose restart exited with code ${code}`);
+
+    // トンネルは流用。生きていなければ(サーバー再起動後など)張り直す。
+    let url = preview.url ?? `http://${env.PREVIEW_HOST}:${preview.hostPort ?? 0}`;
+    if (env.PREVIEW_TUNNEL && preview.hostPort && !isTunnelAlive(previewId)) {
+      try {
+        log("Tunnel is not active; starting a new Cloudflare Quick Tunnel...");
+        url = await startTunnel(previewId, preview.hostPort);
+        log(`Tunnel ready: ${url}`);
+      } catch (e) {
+        log(`WARN: tunnel failed (${e instanceof Error ? e.message : String(e)}); keeping ${url}`);
+      }
+    } else if (env.PREVIEW_TUNNEL) {
+      log("Reusing the existing tunnel.");
+    }
+
+    await setStatus("running", { url });
+    log(`Preview restarted at ${url}`);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    log(`ERROR: ${message}`);
+    await setStatus("failed");
+    throw e;
+  }
 }

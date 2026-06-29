@@ -1,6 +1,6 @@
 import { prisma } from "../db/client";
 
-export type JobType = "build" | "destroy";
+export type JobType = "build" | "destroy" | "restart";
 
 export interface JobPayload {
   pullRequestId: string;

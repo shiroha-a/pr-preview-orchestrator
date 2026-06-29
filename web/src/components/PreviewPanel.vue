@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ExternalLink, Loader2, Play, RotateCw, Square } from "lucide-vue-next";
+import { ExternalLink, Loader2, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { PreviewDTO } from "../types";
@@ -98,6 +98,23 @@ async function destroy() {
   }
 }
 
+// ビルドせずにコンテナを再起動(トンネルは流用)。
+async function restart() {
+  busy.value = true;
+  actionError.value = null;
+  logs.value = [];
+  try {
+    const res = await api.restartPreview(props.owner, props.name, props.number);
+    previewId.value = res.previewId;
+    status.value = "building";
+    connect(res.previewId);
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : "再起動に失敗しました";
+  } finally {
+    busy.value = false;
+  }
+}
+
 onMounted(() => {
   if (previewId.value) connect(previewId.value);
 });
@@ -122,6 +139,16 @@ onUnmounted(disconnect);
           <BaseButton size="sm" :disabled="busy" @click="start">
             <component :is="status === 'running' ? RotateCw : Play" class="h-4 w-4" />
             {{ status === "running" ? "再ビルド" : "プレビューを起動" }}
+          </BaseButton>
+          <BaseButton
+            v-if="status === 'running'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            @click="restart"
+          >
+            <RotateCcw class="h-4 w-4" />
+            再起動
           </BaseButton>
           <BaseButton v-if="canStop" size="sm" variant="danger" :disabled="busy" @click="destroy">
             <Square class="h-4 w-4" />

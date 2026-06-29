@@ -93,6 +93,12 @@ export const api = {
       { method: "POST" },
     ),
 
+  restartPreview: (owner: string, name: string, number: number) =>
+    request<{ jobId: string; previewId: string }>(
+      `/repositories/${owner}/${name}/pulls/${number}/preview/restart`,
+      { method: "POST" },
+    ),
+
   destroyPreview: (owner: string, name: string, number: number) =>
     request<{ jobId: string }>(`/repositories/${owner}/${name}/pulls/${number}/preview`, {
       method: "DELETE",
