@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import type { CommentDTO, PreviewDTO, PullRequestDTO } from "../types";
 import CommentList from "../components/CommentList.vue";
 import DiffView from "../components/DiffView.vue";
+import DraftBadge from "../components/DraftBadge.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
 import PreviewPanel from "../components/PreviewPanel.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
@@ -99,6 +100,7 @@ onMounted(() => {
           <h1 class="text-xl font-semibold">
             {{ pr.title }} <span class="text-gray-400">#{{ pr.number }}</span>
           </h1>
+          <DraftBadge v-if="pr.draft" />
           <PrStateBadge :state="pr.state" />
           <a
             v-if="pr.htmlUrl"
@@ -139,7 +141,13 @@ onMounted(() => {
         </div>
       </BaseCard>
 
-      <PreviewPanel :owner="owner" :name="name" :number="number" :initial-preview="preview" />
+      <PreviewPanel
+        :owner="owner"
+        :name="name"
+        :number="number"
+        :initial-preview="preview"
+        :pr-head-sha="pr.headSha"
+      />
 
       <section v-if="cleanBody" class="space-y-2">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">説明</h2>

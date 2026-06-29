@@ -43,6 +43,7 @@ model PullRequest {
   title        String
   body         String?
   state        String // open / closed / merged
+  draft        Boolean  @default(false)
   authorLogin  String
   headRef      String
   headSha      String

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ExternalLink, Loader2, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
+import { Eraser, ExternalLink, Loader2, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { PreviewDTO } from "../types";
+import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
 import BaseButton from "./ui/BaseButton.vue";
 import BaseCard from "./ui/BaseCard.vue";
@@ -13,11 +14,13 @@ const props = defineProps<{
   name: string;
   number: number;
   initialPreview: PreviewDTO | null;
+  prHeadSha?: string;
 }>();
 
 const status = ref(props.initialPreview?.status ?? "idle");
 const url = ref<string | null>(props.initialPreview?.url ?? null);
 const previewId = ref<string | null>(props.initialPreview?.id ?? null);
+const commitSha = ref<string | null>(props.initialPreview?.commitSha ?? null);
 const logs = ref<string[]>(
   props.initialPreview?.logs ? props.initialPreview.logs.split("\n").filter(Boolean) : [],
 );
@@ -28,6 +31,11 @@ const ACTIVE = ["pending", "cloning", "building", "stopping"];
 const isActive = computed(() => ACTIVE.includes(status.value));
 const canStop = computed(
   () => previewId.value != null && !isActive.value && status.value !== "idle",
+);
+
+// ビルド済みコミットがPR最新コミットと異なれば「古い」と判定する(issue #17)。
+const isOutdated = computed(
+  () => !!props.prHeadSha && !!commitSha.value && commitSha.value !== props.prHeadSha,
 );
 
 let es: EventSource | null = null;
@@ -62,18 +70,20 @@ async function refresh() {
       status.value = preview.status;
       url.value = preview.url;
       previewId.value = preview.id;
+      commitSha.value = preview.commitSha;
     }
   } catch {
     /* ignore */
   }
 }
 
-async function start() {
+// noCache=true でビルドキャッシュを破棄して再ビルドする(issue #20)。
+async function start(noCache = false) {
   busy.value = true;
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await api.startPreview(props.owner, props.name, props.number);
+    const res = await api.startPreview(props.owner, props.name, props.number, noCache);
     previewId.value = res.previewId;
     status.value = "pending";
     connect(res.previewId);
@@ -136,7 +146,7 @@ onUnmounted(disconnect);
           処理中...
         </span>
         <template v-else>
-          <BaseButton size="sm" :disabled="busy" @click="start">
+          <BaseButton size="sm" :disabled="busy" @click="start()">
             <component :is="status === 'running' ? RotateCw : Play" class="h-4 w-4" />
             {{ status === "running" ? "再ビルド" : "プレビューを起動" }}
           </BaseButton>
@@ -149,6 +159,17 @@ onUnmounted(disconnect);
           >
             <RotateCcw class="h-4 w-4" />
             再起動
+          </BaseButton>
+          <BaseButton
+            v-if="status === 'running'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            title="ビルドキャッシュを破棄して再ビルドします"
+            @click="start(true)"
+          >
+            <Eraser class="h-4 w-4" />
+            キャッシュ破棄して再ビルド
           </BaseButton>
           <BaseButton v-if="canStop" size="sm" variant="danger" :disabled="busy" @click="destroy">
             <Square class="h-4 w-4" />
@@ -172,6 +193,18 @@ onUnmounted(disconnect);
       </div>
       <p v-else-if="!isActive && status === 'idle'" class="text-sm text-gray-500">
         まだプレビュー環境は作成されていません。
+      </p>
+
+      <!-- ビルド済みコミットとPR最新コミットの比較(issue #17) -->
+      <p v-if="commitSha" class="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+        <span>ビルド済み</span>
+        <code>{{ commitSha.slice(0, 7) }}</code>
+        <template v-if="prHeadSha">
+          <span>/ 最新</span>
+          <code>{{ prHeadSha.slice(0, 7) }}</code>
+          <BaseBadge v-if="isOutdated" tone="amber">新しいコミットあり</BaseBadge>
+          <BaseBadge v-else tone="green">最新</BaseBadge>
+        </template>
       </p>
 
       <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>

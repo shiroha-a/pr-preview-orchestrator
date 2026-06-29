@@ -56,6 +56,7 @@ export interface PullRequestDTO {
   title: string;
   body: string | null;
   state: string;
+  draft: boolean;
   authorLogin: string;
   headRef: string;
   headSha: string;

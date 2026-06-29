@@ -289,6 +289,10 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
   });
   if (!pull) return c.json({ error: "Pull request not found" }, 404);
 
+  // ボディは任意。キャッシュ破棄再ビルド時のみ { noCache: true } が送られる(issue #20)。
+  const body = await c.req.json<{ noCache?: boolean }>().catch(() => ({}) as { noCache?: boolean });
+  const noCache = body.noCache === true;
+
   // プレビュー設定が未設定なら起動しない(pending で固まるのを防ぐ。issue #8)。
   if (!repository.webService || !repository.internalPort) {
     return c.json(
@@ -310,7 +314,7 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
     },
     update: { status: "pending" },
   });
-  const jobId = await enqueueJob("build", { pullRequestId: pull.id });
+  const jobId = await enqueueJob("build", { pullRequestId: pull.id, noCache });
   return c.json({ jobId, previewId: preview.id });
 });
 

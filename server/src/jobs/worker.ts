@@ -26,7 +26,7 @@ async function tick(): Promise<void> {
       try {
         const payload = JSON.parse(job.payload) as JobPayload;
         if (job.type === "build") {
-          await buildPreview(payload.pullRequestId);
+          await buildPreview(payload.pullRequestId, payload.noCache);
         } else if (job.type === "destroy") {
           await destroyPreview(payload.pullRequestId);
         } else if (job.type === "restart") {
