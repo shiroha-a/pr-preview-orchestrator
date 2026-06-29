@@ -215,8 +215,23 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
   const { owner, name } = c.req.param();
   const number = Number(c.req.param("number"));
   if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
-  const pull = await findPull(owner, name, number);
+  const repository = await findRepo(owner, name);
+  if (!repository) return c.json({ error: "Repository not found" }, 404);
+  const pull = await prisma.pullRequest.findUnique({
+    where: { repositoryId_number: { repositoryId: repository.id, number } },
+  });
   if (!pull) return c.json({ error: "Pull request not found" }, 404);
+
+  // プレビュー設定が未設定なら起動しない(pending で固まるのを防ぐ。issue #8)。
+  if (!repository.webService || !repository.internalPort) {
+    return c.json(
+      {
+        error:
+          "プレビュー設定が未設定です。リポジトリのプレビュー設定で公開Webサービス名と内部ポートを指定してください。",
+      },
+      400,
+    );
+  }
 
   // 即座にpending状態のpreviewを用意し、フロントがSSE購読を開始できるようにする。
   const preview = await prisma.previewEnvironment.upsert({

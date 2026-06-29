@@ -151,12 +151,6 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
   if (!pr) throw new Error("Pull request not found");
   const repo = pr.repository;
 
-  if (!repo.webService || !repo.internalPort) {
-    throw new Error(
-      "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
-    );
-  }
-
   const project = composeProjectName(repo.owner, repo.name, pr.number);
   const preview = await prisma.previewEnvironment.upsert({
     where: { pullRequestId },
@@ -190,6 +184,14 @@ export async function buildPreview(pullRequestId: string): Promise<void> {
   const mask = token ? [token] : [];
 
   try {
+    // 設定チェックは preview 作成後・try 内で行う。preview 作成前に投げると
+    // status が pending のまま残り「待機中」で固まってしまう(issue #8)。
+    if (!repo.webService || !repo.internalPort) {
+      throw new Error(
+        "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
+      );
+    }
+
     await setStatus("cloning");
     log(`Cloning ${repo.owner}/${repo.name} PR #${pr.number} (${pr.headSha.slice(0, 7)})...`);
 
