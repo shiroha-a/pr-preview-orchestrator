@@ -3,6 +3,7 @@ import { HTTPException } from "hono/http-exception";
 
 import { prisma } from "../db/client";
 import { hashPassword } from "../auth/password";
+import { getCachedUserCount, refreshAuthCache } from "../auth/middleware";
 
 export const usersRoutes = new Hono();
 
@@ -15,11 +16,20 @@ usersRoutes.get("/", async (c) => {
   return c.json({ users });
 });
 
-/** Create a new user. */
+/** Create a new user.
+ *
+ * Rejected when no admin user exists yet (auth disabled), to prevent
+ * unauthenticated account creation. */
 usersRoutes.post("/", async (c) => {
+  if (getCachedUserCount() === 0) {
+    throw new HTTPException(403, {
+      message: "cannot create user while authentication is disabled",
+    });
+  }
+
   const body = await c.req.json<{ username?: string; password?: string }>();
   const username = body.username?.trim();
-  const password = body.password?.trim();
+  const password = body.password;
 
   if (!username || !password) {
     throw new HTTPException(400, { message: "username and password are required" });
@@ -36,6 +46,7 @@ usersRoutes.post("/", async (c) => {
     select: { id: true, username: true, createdAt: true, updatedAt: true },
   });
 
+  await refreshAuthCache();
   return c.json({ user }, 201);
 });
 
@@ -59,5 +70,6 @@ usersRoutes.delete("/:id", async (c) => {
   }
 
   await prisma.user.delete({ where: { id } });
+  await refreshAuthCache();
   return c.json({ ok: true });
 });

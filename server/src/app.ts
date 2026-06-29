@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 
 import { dbBasicAuth } from "./auth/middleware";
 import { env, hasGitHubToken } from "./env";
+import { getCachedUserCount } from "./auth/middleware";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
@@ -28,13 +29,11 @@ export function createApp() {
   // --- Admin basic-auth: protects everything below when configured ---
   app.use("*", dbBasicAuth());
 
-  app.get("/api/config", async (c) => {
-    const { prisma } = await import("./db/client");
-    const userCount = await prisma.user.count();
-    return c.json({
+  app.get("/api/config", (c) =>
+    c.json({
       tokenSet: hasGitHubToken(),
       webhookSecretSet: Boolean(env.GITHUB_WEBHOOK_SECRET),
-      adminAuthEnabled: userCount > 0,
+      adminAuthEnabled: getCachedUserCount() > 0,
       preview: {
         host: env.PREVIEW_HOST,
         portMin: env.PREVIEW_PORT_MIN,
@@ -42,8 +41,8 @@ export function createApp() {
         workspacesDir: env.WORKSPACES_DIR,
         tunnel: env.PREVIEW_TUNNEL,
       },
-    });
-  });
+    }),
+  );
 
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);

@@ -2,11 +2,13 @@ import { serve } from "@hono/node-server";
 
 import { createApp } from "./app";
 import { env } from "./env";
-import { seedAdminUser } from "./db/seed";
+import { syncAdminUser } from "./db/seed";
+import { initAuthCache } from "./auth/middleware";
 import { startWorker } from "./jobs/worker";
 
 async function main() {
-  await seedAdminUser();
+  await initAuthCache();
+  await syncAdminUser();
 
   const app = createApp();
 

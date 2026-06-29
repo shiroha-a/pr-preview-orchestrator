@@ -4,6 +4,28 @@ import { HTTPException } from "hono/http-exception";
 import { prisma } from "../db/client";
 import { verifyPassword } from "./password";
 
+/** Cached user count to avoid a COUNT query on every request. */
+export let cachedUserCount: number | null = null;
+
+/** Initialise the cached user count at boot time. */
+export async function initAuthCache(): Promise<void> {
+  cachedUserCount = await prisma.user.count();
+}
+
+/** Refresh the cached count after mutating operations (create / delete). */
+export async function refreshAuthCache(): Promise<void> {
+  cachedUserCount = await prisma.user.count();
+}
+
+/** Expose the cached count for other modules (e.g. tests, config endpoint). */
+export function getCachedUserCount(): number {
+  return cachedUserCount ?? 0;
+}
+
+/** A dummy bcrypt hash used for constant-time comparison when user does not exist. */
+const DUMMY_HASH =
+  "$2b$12$abcdefghijklmnopqrstuvwxycV/PgbONQlK6HsN6qPoQfXzAzMn3Gq";
+
 /**
  * Custom Basic Auth middleware that validates credentials against the User
  * table in the database (bcrypt hashed passwords).
@@ -12,9 +34,7 @@ import { verifyPassword } from "./password";
  */
 export function dbBasicAuth() {
   return async (c: Context, next: Next) => {
-    const userCount = await prisma.user.count();
-    if (userCount === 0) {
-      // No users in DB yet → auth disabled (seed will create the first one)
+    if ((cachedUserCount ?? 0) === 0) {
       await next();
       return;
     }
@@ -36,13 +56,13 @@ export function dbBasicAuth() {
     const password = decoded.slice(colonIndex + 1);
 
     const user = await prisma.user.findUnique({ where: { username } });
-    if (!user) {
-      c.header("WWW-Authenticate", 'Basic realm="Admin"');
-      throw new HTTPException(401, { message: "Unauthorized" });
-    }
 
-    const valid = await verifyPassword(password, user.passwordHash);
-    if (!valid) {
+    // Always run bcrypt.compare, even when the user does not exist, to
+    // prevent timing attacks that enumerate valid usernames.
+    const hashToCompare = user ? user.passwordHash : DUMMY_HASH;
+    const valid = await verifyPassword(password, hashToCompare);
+
+    if (!user || !valid) {
       c.header("WWW-Authenticate", 'Basic realm="Admin"');
       throw new HTTPException(401, { message: "Unauthorized" });
     }
