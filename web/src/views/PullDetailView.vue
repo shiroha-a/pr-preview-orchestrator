@@ -10,6 +10,7 @@ import DiffView from "../components/DiffView.vue";
 import DraftBadge from "../components/DraftBadge.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
 import PreviewPanel from "../components/PreviewPanel.vue";
+import type { PreviewActions } from "../components/PreviewPanel.vue";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 
@@ -17,6 +18,14 @@ const route = useRoute();
 const owner = route.params.owner as string;
 const name = route.params.name as string;
 const number = Number(route.params.number);
+
+// PRプレビューの操作を PreviewPanel に渡す(issue #25でパネルを汎用化)。
+const previewActions: PreviewActions = {
+  start: (noCache) => api.startPreview(owner, name, number, noCache),
+  restart: () => api.restartPreview(owner, name, number),
+  destroy: () => api.destroyPreview(owner, name, number).then(() => undefined),
+  refresh: async () => (await api.getPreview(owner, name, number)).preview,
+};
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -142,10 +151,8 @@ onMounted(() => {
       </BaseCard>
 
       <PreviewPanel
-        :owner="owner"
-        :name="name"
-        :number="number"
         :initial-preview="preview"
+        :actions="previewActions"
         :pr-head-sha="pr.headSha"
       />
 

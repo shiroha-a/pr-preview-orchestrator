@@ -8,9 +8,9 @@ import {
   fetchPullRequestDiff,
   syncPullRequests,
 } from "../github/pulls";
-import { addRepository } from "../github/repositories";
+import { addRepository, listRepositoryBranches } from "../github/repositories";
 import { enqueueJob } from "../jobs/queue";
-import { composeProjectName, destroyPreview } from "../preview/service";
+import { branchComposeProjectName, composeProjectName, destroyPreview } from "../preview/service";
 
 export const repositoriesRoutes = new Hono();
 
@@ -314,7 +314,7 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
     },
     update: { status: "pending" },
   });
-  const jobId = await enqueueJob("build", { pullRequestId: pull.id, noCache });
+  const jobId = await enqueueJob("build", { previewId: preview.id, noCache });
   return c.json({ jobId, previewId: preview.id });
 });
 
@@ -324,7 +324,11 @@ repositoriesRoutes.delete("/:owner/:name/pulls/:number/preview", async (c) => {
   if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
   const pull = await findPull(owner, name, number);
   if (!pull) return c.json({ error: "Pull request not found" }, 404);
-  const jobId = await enqueueJob("destroy", { pullRequestId: pull.id });
+  const preview = await prisma.previewEnvironment.findUnique({
+    where: { pullRequestId: pull.id },
+  });
+  if (!preview) return c.json({ ok: true });
+  const jobId = await enqueueJob("destroy", { previewId: preview.id });
   return c.json({ jobId });
 });
 
@@ -341,6 +345,71 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview/restart", async (c)
   if (!preview) {
     return c.json({ error: "プレビュー環境がありません。先に起動してください。" }, 400);
   }
-  const jobId = await enqueueJob("restart", { pullRequestId: pull.id });
+  const jobId = await enqueueJob("restart", { previewId: preview.id });
+  return c.json({ jobId, previewId: preview.id });
+});
+
+// --- Branch-based previews (issue #25) ---
+
+/** List branches available on GitHub for this repository. */
+repositoriesRoutes.get("/:owner/:name/branches", async (c) => {
+  const { owner, name } = c.req.param();
+  const repository = await findRepo(owner, name);
+  if (!repository) return c.json({ error: "Repository not found" }, 404);
+  try {
+    const branches = await listRepositoryBranches(owner, name);
+    return c.json({ branches });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "ブランチの取得に失敗しました" }, 502);
+  }
+});
+
+/** List branch-based preview environments for this repository. */
+repositoriesRoutes.get("/:owner/:name/branch-previews", async (c) => {
+  const { owner, name } = c.req.param();
+  const repository = await findRepo(owner, name);
+  if (!repository) return c.json({ error: "Repository not found" }, 404);
+  const previews = await prisma.previewEnvironment.findMany({
+    where: { repositoryId: repository.id, kind: "branch" },
+    orderBy: { updatedAt: "desc" },
+  });
+  return c.json({ previews });
+});
+
+/** Start (or rebuild) a preview for a specific branch. */
+repositoriesRoutes.post("/:owner/:name/branch-preview", async (c) => {
+  const { owner, name } = c.req.param();
+  const repository = await findRepo(owner, name);
+  if (!repository) return c.json({ error: "Repository not found" }, 404);
+
+  const body = await c.req
+    .json<{ branch?: string; noCache?: boolean }>()
+    .catch(() => ({}) as { branch?: string; noCache?: boolean });
+  const branch = body.branch?.trim();
+  if (!branch) return c.json({ error: "branch を指定してください" }, 400);
+  const noCache = body.noCache === true;
+
+  if (!repository.webService || !repository.internalPort) {
+    return c.json(
+      {
+        error:
+          "プレビュー設定が未設定です。リポジトリのプレビュー設定で公開Webサービス名と内部ポートを指定してください。",
+      },
+      400,
+    );
+  }
+
+  const preview = await prisma.previewEnvironment.upsert({
+    where: { repositoryId_branchRef: { repositoryId: repository.id, branchRef: branch } },
+    create: {
+      kind: "branch",
+      repositoryId: repository.id,
+      branchRef: branch,
+      status: "pending",
+      composeProject: branchComposeProjectName(owner, name, branch),
+    },
+    update: { status: "pending" },
+  });
+  const jobId = await enqueueJob("build", { previewId: preview.id, noCache });
   return c.json({ jobId, previewId: preview.id });
 });

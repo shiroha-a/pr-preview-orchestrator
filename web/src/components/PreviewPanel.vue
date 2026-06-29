@@ -2,19 +2,28 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Eraser, ExternalLink, Loader2, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
 
-import { api } from "../api/client";
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
 import BaseButton from "./ui/BaseButton.vue";
 import BaseCard from "./ui/BaseCard.vue";
 
+/**
+ * Operations the panel performs, abstracting whether the preview targets a PR
+ * or a branch (issue #25). The parent supplies the concrete API calls.
+ */
+export interface PreviewActions {
+  start: (noCache: boolean) => Promise<{ previewId: string }>;
+  restart: () => Promise<{ previewId: string }>;
+  destroy: () => Promise<void>;
+  refresh: () => Promise<PreviewDTO | null>;
+}
+
 const props = defineProps<{
-  owner: string;
-  name: string;
-  number: number;
   initialPreview: PreviewDTO | null;
+  actions: PreviewActions;
   prHeadSha?: string;
+  title?: string;
 }>();
 
 const status = ref(props.initialPreview?.status ?? "idle");
@@ -65,7 +74,7 @@ function connect(id: string) {
 
 async function refresh() {
   try {
-    const { preview } = await api.getPreview(props.owner, props.name, props.number);
+    const preview = await props.actions.refresh();
     if (preview) {
       status.value = preview.status;
       url.value = preview.url;
@@ -83,7 +92,7 @@ async function start(noCache = false) {
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await api.startPreview(props.owner, props.name, props.number, noCache);
+    const res = await props.actions.start(noCache);
     previewId.value = res.previewId;
     status.value = "pending";
     connect(res.previewId);
@@ -98,7 +107,7 @@ async function destroy() {
   busy.value = true;
   actionError.value = null;
   try {
-    await api.destroyPreview(props.owner, props.name, props.number);
+    await props.actions.destroy();
     status.value = "stopping";
     if (previewId.value) connect(previewId.value);
   } catch (e) {
@@ -114,7 +123,7 @@ async function restart() {
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await api.restartPreview(props.owner, props.name, props.number);
+    const res = await props.actions.restart();
     previewId.value = res.previewId;
     status.value = "building";
     connect(res.previewId);
@@ -137,7 +146,7 @@ onUnmounted(disconnect);
       class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800"
     >
       <div class="flex items-center gap-2">
-        <span class="text-sm font-semibold">プレビュー環境</span>
+        <span class="text-sm font-semibold">{{ title ?? "プレビュー環境" }}</span>
         <PreviewStatusBadge :status="status" />
       </div>
       <div class="flex items-center gap-2">

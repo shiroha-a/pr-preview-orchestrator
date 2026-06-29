@@ -8,6 +8,7 @@ import { ja } from "date-fns/locale";
 import { api } from "../api/client";
 import type { PrLabel, PullRequestDTO, RepositoryDTO } from "../types";
 import AsyncButton from "../components/AsyncButton.vue";
+import BranchPreviews from "../components/BranchPreviews.vue";
 import DraftBadge from "../components/DraftBadge.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
 import PreviewStatusBadge from "../components/PreviewStatusBadge.vue";
@@ -135,5 +136,7 @@ function parseLabels(raw: string | null): PrLabel[] {
         </li>
       </ul>
     </template>
+
+    <BranchPreviews :owner="owner" :name="name" />
   </div>
 </template>

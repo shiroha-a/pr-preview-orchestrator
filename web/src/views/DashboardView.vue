@@ -16,6 +16,26 @@ const previews = ref<PreviewListItem[]>([]);
 const ACTIVE = ["pending", "cloning", "building", "running", "stopping"];
 const activePreviews = computed(() => previews.value.filter((p) => ACTIVE.includes(p.status)));
 
+// プレビューはPRまたはブランチを対象とする(issue #25)。表示用の情報を解決する。
+function previewRepo(p: PreviewListItem): { owner: string; name: string } | null {
+  return p.pullRequest?.repository ?? p.repository;
+}
+function previewLink(p: PreviewListItem): string {
+  const r = previewRepo(p);
+  if (!r) return "/";
+  return p.pullRequest
+    ? `/repos/${r.owner}/${r.name}/pull/${p.pullRequest.number}`
+    : `/repos/${r.owner}/${r.name}`;
+}
+function previewHeading(p: PreviewListItem): string {
+  const r = previewRepo(p);
+  const slug = r ? `${r.owner}/${r.name}` : "";
+  return p.pullRequest ? `${slug} #${p.pullRequest.number}` : slug;
+}
+function previewSubtitle(p: PreviewListItem): string {
+  return p.pullRequest ? p.pullRequest.title : `ブランチ: ${p.branchRef}`;
+}
+
 async function load() {
   loading.value = true;
   error.value = null;
@@ -56,16 +76,14 @@ onMounted(load);
             <div class="space-y-2 p-4">
               <div class="flex items-center justify-between gap-2">
                 <RouterLink
-                  :to="`/repos/${p.pullRequest.repository.owner}/${p.pullRequest.repository.name}/pull/${p.pullRequest.number}`"
+                  :to="previewLink(p)"
                   class="truncate text-sm font-medium hover:underline"
                 >
-                  {{ p.pullRequest.repository.owner }}/{{ p.pullRequest.repository.name }} #{{
-                    p.pullRequest.number
-                  }}
+                  {{ previewHeading(p) }}
                 </RouterLink>
                 <PreviewStatusBadge :status="p.status" />
               </div>
-              <p class="truncate text-xs text-gray-500">{{ p.pullRequest.title }}</p>
+              <p class="truncate text-xs text-gray-500">{{ previewSubtitle(p) }}</p>
               <a
                 v-if="p.url"
                 :href="p.url"

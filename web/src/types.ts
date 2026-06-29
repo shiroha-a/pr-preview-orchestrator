@@ -35,7 +35,11 @@ export interface RepositoryDTO {
 
 export interface PreviewDTO {
   id: string;
-  pullRequestId: string;
+  // "pr" | "branch" (issue #25)
+  kind: string;
+  pullRequestId: string | null;
+  repositoryId: string | null;
+  branchRef: string | null;
   status: string;
   composeProject: string;
   url: string | null;
@@ -47,11 +51,19 @@ export interface PreviewDTO {
 }
 
 export interface PreviewListItem extends PreviewDTO {
+  // Set for PR previews; null for branch previews.
   pullRequest: {
     number: number;
     title: string;
     repository: { owner: string; name: string };
-  };
+  } | null;
+  // Set for branch previews; null for PR previews.
+  repository: { owner: string; name: string } | null;
+}
+
+export interface BranchInfo {
+  name: string;
+  commitSha: string;
 }
 
 export interface PullRequestDTO {
