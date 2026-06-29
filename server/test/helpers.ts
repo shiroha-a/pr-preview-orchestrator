@@ -4,8 +4,12 @@ import { rmSync } from "node:fs";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../src/generated/prisma/client";
 
-function dbUrl(): string {
-  return `file:./test.${process.pid}.db`;
+export function testDbPath(): string {
+  return `test.${process.pid}.db`;
+}
+
+export function testDbUrl(): string {
+  return `file:./${testDbPath()}`;
 }
 
 export function basicAuthHeader(user: string, pass: string): string {
@@ -13,21 +17,25 @@ export function basicAuthHeader(user: string, pass: string): string {
 }
 
 export function createTestPrisma(): PrismaClient {
-  const adapter = new PrismaBetterSqlite3({ url: dbUrl() });
+  const adapter = new PrismaBetterSqlite3({ url: testDbUrl() });
   return new PrismaClient({ adapter });
+}
+
+export function runMigrateDeploy(): void {
+  execSync("npx prisma migrate deploy", {
+    cwd: process.cwd(),
+    env: { ...process.env, DATABASE_URL: testDbUrl() },
+    stdio: "pipe",
+  });
 }
 
 export function setupTestDb(): void {
   try {
-    rmSync(`test.${process.pid}.db`);
+    rmSync(testDbPath());
   } catch {
     // ignore if not exists
   }
-  execSync("npx prisma migrate deploy", {
-    cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: dbUrl() },
-    stdio: "ignore",
-  });
+  runMigrateDeploy();
 }
 
 export async function truncateAll(prisma: PrismaClient): Promise<void> {
@@ -39,7 +47,7 @@ export async function truncateAll(prisma: PrismaClient): Promise<void> {
 
 export function cleanupTestDb(): void {
   try {
-    rmSync(`test.${process.pid}.db`);
+    rmSync(testDbPath());
   } catch {
     // ignore
   }

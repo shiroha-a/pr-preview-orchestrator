@@ -13,6 +13,8 @@
     "build": "npm run build -w web && npm run build -w server",
     "start": "npm run start -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "test": "npm run test -w server",
+    "ci": "bash scripts/ci.sh",
     "format": "prettier --write .",
     "db:migrate": "npm run db:migrate -w server",
     "db:generate": "npm run db:generate -w server",
