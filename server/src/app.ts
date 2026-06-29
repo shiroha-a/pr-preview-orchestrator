@@ -3,14 +3,15 @@ import { join } from "node:path";
 
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { basicAuth } from "hono/basic-auth";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 
-import { env, hasAdminAuth, hasGitHubToken } from "./env";
+import { dbBasicAuth } from "./auth/middleware";
+import { env, hasGitHubToken } from "./env";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
+import { usersRoutes } from "./routes/users";
 import { webhookRoutes } from "./routes/webhook";
 
 /** Build the Hono application with all routes mounted. */
@@ -25,21 +26,15 @@ export function createApp() {
   app.route("/api/github/webhook", webhookRoutes);
 
   // --- Admin basic-auth: protects everything below when configured ---
-  if (hasAdminAuth()) {
-    app.use(
-      "*",
-      basicAuth({
-        username: env.ADMIN_USER as string,
-        password: env.ADMIN_PASSWORD as string,
-      }),
-    );
-  }
+  app.use("*", dbBasicAuth());
 
-  app.get("/api/config", (c) =>
-    c.json({
+  app.get("/api/config", async (c) => {
+    const { prisma } = await import("./db/client");
+    const userCount = await prisma.user.count();
+    return c.json({
       tokenSet: hasGitHubToken(),
       webhookSecretSet: Boolean(env.GITHUB_WEBHOOK_SECRET),
-      adminAuthEnabled: hasAdminAuth(),
+      adminAuthEnabled: userCount > 0,
       preview: {
         host: env.PREVIEW_HOST,
         portMin: env.PREVIEW_PORT_MIN,
@@ -47,12 +42,13 @@ export function createApp() {
         workspacesDir: env.WORKSPACES_DIR,
         tunnel: env.PREVIEW_TUNNEL,
       },
-    }),
-  );
+    });
+  });
 
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);
   app.route("/api/metrics", metricsRoutes);
+  app.route("/api/users", usersRoutes);
 
   // Serve the built web SPA in production (only when web/dist exists, so the
   // dev server is unaffected).
