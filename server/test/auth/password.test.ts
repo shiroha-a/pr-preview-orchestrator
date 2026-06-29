@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { hashPassword, verifyPassword } from "./password";
+import { hashPassword, verifyPassword } from "../../src/auth/password";
 
 describe("hashPassword", () => {
   it("bcryptハッシュ文字列を返す", async () => {

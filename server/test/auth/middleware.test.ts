@@ -1,15 +1,15 @@
 import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { dbBasicAuth, setCachedUserCount } from "./middleware";
-import { hashPassword } from "./password";
+import { dbBasicAuth, setCachedUserCount } from "../../src/auth/middleware";
+import { hashPassword } from "../../src/auth/password";
 import {
   basicAuthHeader,
   createTestPrisma,
   setupTestDb,
   truncateAll,
   cleanupTestDb,
-} from "../test/helpers";
+} from "../helpers";
 
 const prisma = createTestPrisma();
 

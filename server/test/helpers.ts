@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { rmSync } from "node:fs";
 
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { PrismaClient } from "../generated/prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client";
 
 function dbUrl(): string {
   return `file:./test.${process.pid}.db`;
