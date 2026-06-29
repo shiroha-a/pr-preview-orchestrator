@@ -17,6 +17,7 @@ const envSchema = z.object({
   WEB_ORIGIN: z.string().default("http://localhost:5173"),
 
   // Optional basic-auth credentials protecting the admin UI/API.
+  // Used as the seed / sync source for the initial admin user.
   ADMIN_USER: z.string().optional(),
   ADMIN_PASSWORD: z.string().optional(),
 
@@ -58,9 +59,4 @@ export const env: Env = envSchema.parse(process.env);
 /** Whether an optional GitHub token is configured. */
 export function hasGitHubToken(): boolean {
   return Boolean(env.GITHUB_TOKEN);
-}
-
-/** Whether admin basic-auth credentials are configured. */
-export function hasAdminAuth(): boolean {
-  return Boolean(env.ADMIN_USER && env.ADMIN_PASSWORD);
 }

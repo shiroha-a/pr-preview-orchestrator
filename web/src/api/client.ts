@@ -32,6 +32,11 @@ export interface RepoSettingsInput {
   resetVolumes: boolean;
 }
 
+export interface CreateUserInput {
+  username: string;
+  password: string;
+}
+
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
 
@@ -103,4 +108,15 @@ export const api = {
     request<{ jobId: string }>(`/repositories/${owner}/${name}/pulls/${number}/preview`, {
       method: "DELETE",
     }),
+
+  getUsers: () => request<{ users: import("../types").UserDTO[] }>("/users"),
+
+  createUser: (body: CreateUserInput) =>
+    request<{ user: import("../types").UserDTO }>("/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  deleteUser: (id: string) =>
+    request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
 };

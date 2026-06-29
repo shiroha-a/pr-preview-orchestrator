@@ -104,3 +104,10 @@ export interface AppConfig {
     tunnel: boolean;
   };
 }
+
+export interface UserDTO {
+  id: string;
+  username: string;
+  createdAt: string;
+  updatedAt: string;
+}
