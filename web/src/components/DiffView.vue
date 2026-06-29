@@ -18,5 +18,5 @@ const rendered = computed(() => {
 <template>
   <p v-if="!rendered" class="text-sm text-gray-500">差分がありません。</p>
   <!-- eslint-disable-next-line vue/no-v-html -->
-  <div v-else class="diff-view overflow-x-auto text-sm" v-html="rendered" />
+  <div v-else class="diff-view d2h-auto-color-scheme overflow-x-auto text-sm" v-html="rendered" />
 </template>
