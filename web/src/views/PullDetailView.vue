@@ -8,6 +8,7 @@ import type { CommentDTO, PreviewDTO, PullRequestDTO } from "../types";
 import CommentList from "../components/CommentList.vue";
 import DiffView from "../components/DiffView.vue";
 import DraftBadge from "../components/DraftBadge.vue";
+import MarkdownView from "../components/MarkdownView.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
 import PreviewPanel from "../components/PreviewPanel.vue";
 import type { PreviewActions } from "../components/PreviewPanel.vue";
@@ -159,8 +160,8 @@ onMounted(() => {
       <section v-if="cleanBody" class="space-y-2">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">説明</h2>
         <BaseCard>
-          <div class="p-4 text-sm whitespace-pre-wrap text-gray-800 dark:text-gray-200">
-            {{ cleanBody }}
+          <div class="p-4">
+            <MarkdownView :source="cleanBody" />
           </div>
         </BaseCard>
       </section>
