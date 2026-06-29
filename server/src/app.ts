@@ -6,9 +6,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 
-import { dbBasicAuth } from "./auth/middleware";
+import { dbBasicAuth, getCachedUserCount } from "./auth/middleware";
 import { env, hasGitHubToken } from "./env";
-import { getCachedUserCount } from "./auth/middleware";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";

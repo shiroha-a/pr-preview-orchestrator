@@ -4,37 +4,46 @@ import { HTTPException } from "hono/http-exception";
 import { prisma } from "../db/client";
 import { verifyPassword } from "./password";
 
-/** Cached user count to avoid a COUNT query on every request. */
+/** リクエスト毎のCOUNTを避けるため、起動時や更新時にキャッシュする。 */
 export let cachedUserCount: number | null = null;
 
-/** Initialise the cached user count at boot time. */
+/** 起動時に一度だけ count をキャッシュする。 */
 export async function initAuthCache(): Promise<void> {
   cachedUserCount = await prisma.user.count();
 }
 
-/** Refresh the cached count after mutating operations (create / delete). */
+/** 作成・削除後にキャッシュを更新する。 */
 export async function refreshAuthCache(): Promise<void> {
   cachedUserCount = await prisma.user.count();
 }
 
-/** Expose the cached count for other modules (e.g. tests, config endpoint). */
+/** 他モジュールから参照用。 */
 export function getCachedUserCount(): number {
   return cachedUserCount ?? 0;
 }
 
-/** A dummy bcrypt hash used for constant-time comparison when user does not exist. */
+/**
+ * ユーザー不在時も bcrypt.compare を走らせるためのダミーハッシュ。
+ * ユーザー名列挙のタイミング攻撃を防ぐ。
+ */
 const DUMMY_HASH =
   "$2b$12$abcdefghijklmnopqrstuvwxycV/PgbONQlK6HsN6qPoQfXzAzMn3Gq";
 
 /**
- * Custom Basic Auth middleware that validates credentials against the User
- * table in the database (bcrypt hashed passwords).
+ * DB に保存された bcrypt ハッシュ照合型 Basic Auth ミドルウェア。
  *
- * Only applied when at least one user exists in the database.
+ * cachedUserCount がまだ null（未初期化）の場合は、ここで遅延初期化して
+ * fail-open（認証スキップ）を防ぐ。テスト等で initAuthCache() を忘れても
+ * 初回リクエスト時に DB 確認されるため安全性が保たれる。
  */
 export function dbBasicAuth() {
   return async (c: Context, next: Next) => {
-    if ((cachedUserCount ?? 0) === 0) {
+    // null の場合は遅延初期化。0件でも必ず DB に問い合わせる。
+    if (cachedUserCount === null) {
+      cachedUserCount = await prisma.user.count();
+    }
+    if (cachedUserCount === 0) {
+      // ユーザーがいない＝認証無効（アプリの初期セットアップ時のみ）
       await next();
       return;
     }
@@ -57,8 +66,7 @@ export function dbBasicAuth() {
 
     const user = await prisma.user.findUnique({ where: { username } });
 
-    // Always run bcrypt.compare, even when the user does not exist, to
-    // prevent timing attacks that enumerate valid usernames.
+    // ユーザー不在時も一定時間の比較を行い、タイミング攻撃を防ぐ
     const hashToCompare = user ? user.passwordHash : DUMMY_HASH;
     const valid = await verifyPassword(password, hashToCompare);
 
@@ -67,7 +75,6 @@ export function dbBasicAuth() {
       throw new HTTPException(401, { message: "Unauthorized" });
     }
 
-    // Store the authenticated username for downstream handlers
     c.set("authUsername", user.username);
     await next();
   };

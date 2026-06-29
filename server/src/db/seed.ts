@@ -4,22 +4,23 @@ import { hashPassword } from "../auth/password";
 import { refreshAuthCache } from "../auth/middleware";
 
 /**
- * Sync the admin user from environment variables with the database.
+ * .env の ADMIN_USER / ADMIN_PASSWORD と DB を同期する。
  *
- * - When both ADMIN_USER and ADMIN_PASSWORD are set:
- *   Upsert the user (create or update password) so that the env config is
- *   always authoritative.
- * - When both are empty/unset:
- *   Remove ALL users from DB so that basic-auth becomes disabled.
+ * - 両方設定済みの場合:
+ *   指定ユーザーを upsert（create または password 更新）し、
+ *   .env を常に正として扱う。
+ * - 両方空の場合:
+ *   DB のすべてのユーザーを削除し Basic 認証を無効化する。
  *
- * This ensures that toggling .env values is reflected on restart.
+ * これにより .env の値を変更・再起動するだけで認証の on/off を
+ * 切り替えられる。
  */
 export async function syncAdminUser(): Promise<void> {
   const adminUser = env.ADMIN_USER?.trim();
-  const adminPassword = env.ADMIN_PASSWORD?.trim();
+  const adminPassword = env.ADMIN_PASSWORD;
 
   if (!adminUser || !adminPassword) {
-    // Env credentials are cleared → remove all users to disable auth
+    // .env の認証情報がクリアされた → DB から全ユーザーを削除して無効化
     const count = await prisma.user.count();
     if (count > 0) {
       await prisma.user.deleteMany();
@@ -29,7 +30,7 @@ export async function syncAdminUser(): Promise<void> {
     return;
   }
 
-  // Upsert the env-specified admin user so the env is authoritative
+  // .env 指定の admin ユーザーを upsert（env が常に正）
   const passwordHash = await hashPassword(adminPassword);
   const existing = await prisma.user.findUnique({ where: { username: adminUser } });
 
