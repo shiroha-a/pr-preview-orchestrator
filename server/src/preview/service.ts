@@ -317,10 +317,10 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
   const target = resolveBuildTarget(loaded);
   const { repo, dir, composeProject: project } = target;
 
-  // 停止/破棄要求でビルドを中断できるようにする(issue #33)。
+  // 停止/破棄要求でビルドを中断できるようにする(issue #33)。controllerの登録は
+  // try 内で行い、この後の更新が投げても finally で確実に解除されるようにする。
   const controller = new AbortController();
   const signal = controller.signal;
-  activeBuilds.set(previewId, controller);
 
   const preview = await prisma.previewEnvironment.update({
     where: { id: previewId },
@@ -347,6 +347,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
   const mask = token ? [token] : [];
 
   try {
+    activeBuilds.set(previewId, controller);
     // 設定チェックは preview 作成後・try 内で行う。preview 作成前に投げると
     // status が pending のまま残り「待機中」で固まってしまう(issue #8)。
     if (!repo.webService || !repo.internalPort) {
@@ -509,6 +510,8 @@ export async function destroyPreview(previewId: string): Promise<void> {
   stopLogStream(previewId);
   stopTunnel(previewId);
 
+  // dockerデーモン無応答でジョブが固着しないようアイドルタイムアウトを設ける(issue #33)。
+  const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
   try {
     if (existsSync(dir)) {
       await runCommand(
@@ -525,13 +528,13 @@ export async function destroyPreview(previewId: string): Promise<void> {
           "-v",
           "--remove-orphans",
         ],
-        { cwd: dir, onLine: log },
+        { cwd: dir, onLine: log, timeoutMs },
       );
     } else {
       await runCommand(
         "docker",
         ["compose", "-p", preview.composeProject, "down", "-v", "--remove-orphans"],
-        { onLine: log },
+        { onLine: log, timeoutMs },
       );
     }
     if (existsSync(dir)) {
@@ -558,6 +561,11 @@ export async function stopPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) return;
   const preview = loaded;
+
+  // 破棄済み・既に停止済み・未作成の preview を "paused" に復活させない(destroy→stop
+  // の順や二重投入での退行を防ぐ)。
+  if (["stopped", "paused", "idle"].includes(preview.status)) return;
+
   const { repo, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
@@ -571,6 +579,7 @@ export async function stopPreview(previewId: string): Promise<void> {
   stopLogStream(previewId);
   stopTunnel(previewId);
 
+  const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
   try {
     if (existsSync(dir)) {
       await runCommand(
@@ -585,23 +594,29 @@ export async function stopPreview(previewId: string): Promise<void> {
           preview.composeProject,
           "stop",
         ],
-        { cwd: dir, onLine: log },
+        { cwd: dir, onLine: log, timeoutMs },
       );
     } else {
       await runCommand("docker", ["compose", "-p", preview.composeProject, "stop"], {
         onLine: log,
+        timeoutMs,
       });
     }
   } catch (e) {
     log(`ERROR during stop: ${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // hostPort は確保したまま(再開時に同じポートを再利用)。url はトンネル停止により無効化。
+  // ビルドが overrideファイル生成まで進んでいない場合(早期中断など)は再開不能なので、
+  // 偽の "paused" にせず "stopped"(ポート解放)にする(issue #33)。
+  const resumable = existsSync(dir) && existsSync(join(dir, OVERRIDE_FILE));
   await prisma.previewEnvironment.update({
     where: { id: previewId },
-    data: { status: "paused", url: null },
+    // resumable時のみ hostPort を確保したまま(再開で同じポートを再利用)。
+    data: resumable
+      ? { status: "paused", url: null }
+      : { status: "stopped", url: null, hostPort: null },
   });
-  emitPreviewStatus(previewId, "paused");
+  emitPreviewStatus(previewId, resumable ? "paused" : "stopped");
 }
 
 /**

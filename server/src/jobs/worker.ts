@@ -52,37 +52,50 @@ async function processJob(job: QueuedJob): Promise<void> {
  * are serialized so a build and its stop/destroy don't race (issue #33).
  */
 async function tick(): Promise<void> {
-  if (activeJobs >= env.PREVIEW_JOB_CONCURRENCY) return;
+  try {
+    if (activeJobs >= env.PREVIEW_JOB_CONCURRENCY) return;
 
-  const candidates: QueuedJob[] = await prisma.job.findMany({
-    where: { status: "queued" },
-    orderBy: { createdAt: "asc" },
-    take: 50,
-    select: { id: true, type: true, payload: true },
-  });
+    // queued 全件を createdAt 順で取得する。take で打ち切ると、先頭が処理中preview宛で
+    // 埋まったとき後続の別previewジョブが永久に着手されない(head-of-lineスタベーション)。
+    const candidates: QueuedJob[] = await prisma.job.findMany({
+      where: { status: "queued" },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, type: true, payload: true },
+    });
 
-  for (const job of candidates) {
-    if (activeJobs >= env.PREVIEW_JOB_CONCURRENCY) break;
-    const previewId = previewIdOf(job);
-    if (!previewId || inFlightPreviews.has(previewId)) continue;
-
-    // previewId を同期的に予約してから claim する(同tick/重複tickでの二重取得を防ぐ)。
-    inFlightPreviews.add(previewId);
-    activeJobs += 1;
-    void (async () => {
-      try {
-        // 別のtickが先に取得していないか、status=queued の行だけを running に更新する。
-        const claimed = await prisma.job.updateMany({
+    for (const job of candidates) {
+      if (activeJobs >= env.PREVIEW_JOB_CONCURRENCY) break;
+      const previewId = previewIdOf(job);
+      // payload不正(previewId欠落)のジョブはスタックしないよう失敗にする。
+      if (!previewId) {
+        void prisma.job.updateMany({
           where: { id: job.id, status: "queued" },
-          data: { status: "running", attempts: { increment: 1 } },
+          data: { status: "failed", error: "invalid payload: missing previewId" },
         });
-        if (claimed.count === 0) return;
-        await processJob(job);
-      } finally {
-        activeJobs -= 1;
-        inFlightPreviews.delete(previewId);
+        continue;
       }
-    })();
+      if (inFlightPreviews.has(previewId)) continue;
+
+      // previewId を同期的に予約してから claim する(同tick/重複tickでの二重取得を防ぐ)。
+      inFlightPreviews.add(previewId);
+      activeJobs += 1;
+      void (async () => {
+        try {
+          // 別のtickが先に取得していないか、status=queued の行だけを running に更新する。
+          const claimed = await prisma.job.updateMany({
+            where: { id: job.id, status: "queued" },
+            data: { status: "running", attempts: { increment: 1 } },
+          });
+          if (claimed.count === 0) return;
+          await processJob(job);
+        } finally {
+          activeJobs -= 1;
+          inFlightPreviews.delete(previewId);
+        }
+      })();
+    }
+  } catch {
+    // 一時的なDBエラーは無視(次tickで回復)。unhandled rejection を防ぐ。
   }
 }
 

@@ -52,6 +52,9 @@ const isActive = computed(() => ACTIVE.includes(status.value));
 const canStop = computed(
   () => previewId.value != null && !isActive.value && status.value !== "idle",
 );
+// ビルド進行中(clone/build)は中断して破棄できるようにする(issue #33)。
+// stopping は片付け中なので対象外。
+const canInterrupt = computed(() => ["pending", "cloning", "building"].includes(status.value));
 
 // ビルド済みコミットがPR最新コミットと異なれば「古い」と判定する(issue #17)。
 const isOutdated = computed(
@@ -176,10 +179,24 @@ onUnmounted(disconnect);
         <PreviewStatusBadge :status="status" />
       </div>
       <div class="flex items-center gap-2">
-        <span v-if="isActive" class="flex items-center gap-1 text-xs text-gray-500">
-          <Loader2 class="h-3.5 w-3.5 animate-spin" />
-          処理中...
-        </span>
+        <template v-if="isActive">
+          <span class="flex items-center gap-1 text-xs text-gray-500">
+            <Loader2 class="h-3.5 w-3.5 animate-spin" />
+            処理中...
+          </span>
+          <!-- ビルド中でも中断して破棄できる(issue #33) -->
+          <BaseButton
+            v-if="canInterrupt"
+            size="sm"
+            variant="danger"
+            :disabled="busy"
+            title="進行中のビルドを中断してプレビューを破棄します"
+            @click="destroy"
+          >
+            <Square class="h-4 w-4" />
+            中断・破棄
+          </BaseButton>
+        </template>
         <template v-else>
           <!-- 一時停止からの再開(issue #32) -->
           <BaseButton v-if="status === 'paused'" size="sm" :disabled="busy" @click="restart">

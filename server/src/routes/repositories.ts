@@ -67,18 +67,24 @@ repositoriesRoutes.delete("/:owner/:name", async (c) => {
   const { owner, name } = c.req.param();
   const repository = await prisma.repository.findUnique({
     where: { owner_name: { owner, name } },
-    include: { pullRequests: { include: { preview: true } } },
+    include: { pullRequests: { include: { preview: true } }, previews: true },
   });
   if (!repository) return c.json({ error: "Repository not found" }, 404);
 
+  // このリポジトリの全プレビューID(PR紐付け + ブランチ紐付けの両方)。
+  const previewIds = [
+    ...repository.pullRequests.map((pr) => pr.preview?.id),
+    ...repository.previews.map((p) => p.id),
+  ].filter((id): id is string => Boolean(id));
+
   // 稼働中のプレビューを破棄(コンテナ・ボリューム・workspace・トンネルを片付ける)。
-  for (const pr of repository.pullRequests) {
-    if (pr.preview) {
-      try {
-        await destroyPreview(pr.id);
-      } catch {
-        // best-effort: 失敗しても削除は続行する。
-      }
+  // 進行中ビルドは先に中断する(issue #33)。destroyPreview には previewId を渡す。
+  for (const id of previewIds) {
+    try {
+      cancelBuild(id);
+      await destroyPreview(id);
+    } catch {
+      // best-effort: 失敗しても削除は続行する。
     }
   }
 
