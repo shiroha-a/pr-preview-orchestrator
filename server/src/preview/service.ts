@@ -699,6 +699,67 @@ export async function restartPreview(previewId: string): Promise<void> {
 }
 
 /**
+ * Re-establish the Cloudflare tunnel (and runtime log stream) for a single
+ * "running" preview after a server restart. The Docker containers survive a
+ * server restart, but the cloudflared child process and the in-memory tunnel
+ * map do not, leaving the preview with a dead trycloudflare URL. This restores
+ * the tunnel and updates the URL without restarting the containers.
+ */
+export async function reattachPreview(previewId: string): Promise<void> {
+  const loaded = await loadPreviewWithTarget(previewId);
+  if (!loaded) return;
+  const preview = loaded;
+  if (preview.status !== "running" || preview.hostPort == null) return;
+
+  const { repo, dir } = resolveBuildTarget(loaded);
+  const log = (line: string) => emitPreviewLog(previewId, line);
+
+  // トンネルが切れている(再起動後は必ず切れている)場合のみ張り直す。
+  if (env.PREVIEW_TUNNEL && !isTunnelAlive(previewId)) {
+    try {
+      log("Re-establishing Cloudflare tunnel after server restart...");
+      const url = await startTunnel(previewId, preview.hostPort);
+      await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
+      log(`Tunnel ready: ${url}`);
+      // 開いているパネルにURL更新を促す(statusは running のまま)。
+      emitPreviewStatus(previewId, "running");
+    } catch (e) {
+      log(`WARN: failed to re-establish tunnel: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // 実行時ログのストリーミングも再起動で失われるため、workspaceがあれば再開する。
+  if (existsSync(dir)) {
+    startLogStream({
+      previewId,
+      dir,
+      composePath: repo.composePath,
+      overrideFile: OVERRIDE_FILE,
+      project: preview.composeProject,
+    });
+  }
+}
+
+/**
+ * On startup, re-establish tunnels/log streams for every preview still marked
+ * "running" (their containers survived the restart but the tunnel did not).
+ * Best-effort and sequential to avoid spawning many cloudflared at once.
+ */
+export async function reattachRunningPreviews(): Promise<void> {
+  const running = await prisma.previewEnvironment.findMany({
+    where: { status: "running" },
+    select: { id: true },
+  });
+  for (const p of running) {
+    try {
+      await reattachPreview(p.id);
+    } catch {
+      // best-effort: 1件失敗しても他を続行する。
+    }
+  }
+}
+
+/**
  * Prune the global Docker build cache via `docker builder prune -f`.
  *
  * This affects the whole Docker host, not a single preview environment. Returns
