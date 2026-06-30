@@ -112,6 +112,13 @@ export const api = {
       method: "DELETE",
     }),
 
+  // 破棄せずコンテナを停止する(issue #32)。
+  stopPreview: (owner: string, name: string, number: number) =>
+    request<{ jobId: string; previewId: string }>(
+      `/repositories/${owner}/${name}/pulls/${number}/preview/stop`,
+      { method: "POST" },
+    ),
+
   // --- Branch-based previews (issue #25) ---
 
   getBranches: (owner: string, name: string) =>
@@ -132,6 +139,9 @@ export const api = {
 
   restartPreviewById: (id: string) =>
     request<{ jobId: string; previewId: string }>(`/preview/${id}/restart`, { method: "POST" }),
+
+  stopPreviewById: (id: string) =>
+    request<{ jobId: string; previewId: string }>(`/preview/${id}/stop`, { method: "POST" }),
 
   destroyPreviewById: (id: string) =>
     request<{ jobId?: string; ok?: boolean }>(`/preview/${id}`, { method: "DELETE" }),

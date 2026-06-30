@@ -69,6 +69,7 @@ function branchActions(preview: PreviewDTO): PreviewActions {
       api.startBranchPreview(props.owner, props.name, preview.branchRef ?? "", noCache),
     restart: () => api.restartPreviewById(preview.id),
     destroy: () => api.destroyPreviewById(preview.id).then(() => undefined),
+    stop: () => api.stopPreviewById(preview.id),
     refresh: async () => (await api.getPreviewById(preview.id)).preview,
   };
 }

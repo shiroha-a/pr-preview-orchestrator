@@ -25,6 +25,7 @@ const previewActions: PreviewActions = {
   start: (noCache) => api.startPreview(owner, name, number, noCache),
   restart: () => api.restartPreview(owner, name, number),
   destroy: () => api.destroyPreview(owner, name, number).then(() => undefined),
+  stop: () => api.stopPreview(owner, name, number),
   refresh: async () => (await api.getPreview(owner, name, number)).preview,
 };
 

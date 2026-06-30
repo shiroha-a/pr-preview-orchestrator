@@ -9,12 +9,35 @@ import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { startLogStream, stopLogStream } from "./logstream";
-import { allocateHostPort } from "./ports";
+import { reserveHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
+
+/** Error thrown when a build is cancelled by a stop/destroy request (issue #33). */
+class BuildCancelledError extends Error {
+  constructor() {
+    super("Build cancelled");
+    this.name = "BuildCancelledError";
+  }
+}
+
+/**
+ * In-flight builds, keyed by previewId. A stop/destroy request aborts the
+ * controller to kill the running git/docker child process so the worker is
+ * freed to process the teardown immediately, even mid-build (issue #33).
+ */
+const activeBuilds = new Map<string, AbortController>();
+
+/** Cancel an in-flight build for a preview, if any. Returns whether one was cancelled. */
+export function cancelBuild(previewId: string): boolean {
+  const controller = activeBuilds.get(previewId);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
 
 function sanitize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
@@ -111,11 +134,17 @@ interface RunOptions {
   mask?: string[];
   /** Kill the process and reject after this many milliseconds. */
   timeoutMs?: number;
+  /** Abort signal to cancel (kill) the running process (issue #33). */
+  signal?: AbortSignal;
 }
 
 /** Run a command, streaming combined stdout/stderr line-by-line to onLine. */
 function runCommand(command: string, args: string[], options: RunOptions = {}): Promise<number> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new BuildCancelledError());
+      return;
+    }
     const child = spawn(command, args, { cwd: options.cwd });
 
     let settled = false;
@@ -126,6 +155,16 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
         timer = null;
       }
     };
+    // 中断要求が来たら子プロセスをkillしてキャンセルとして reject する(issue #33)。
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimer();
+      child.kill("SIGKILL");
+      reject(new BuildCancelledError());
+    };
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const cleanupAbort = () => options.signal?.removeEventListener("abort", onAbort);
     // アイドルタイムアウト: 出力が一定時間途切れたときだけ打ち切る。巨大ビルドでも
     // 進捗(出力)がある限りタイムアウトしない(issue #14)。
     const armTimer = () => {
@@ -134,6 +173,7 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
       timer = setTimeout(() => {
         if (settled) return;
         settled = true;
+        cleanupAbort();
         child.kill("SIGKILL");
         reject(
           new Error(`Command timed out after ${options.timeoutMs}ms with no output: ${command}`),
@@ -159,12 +199,14 @@ function runCommand(command: string, args: string[], options: RunOptions = {}): 
       if (settled) return;
       settled = true;
       clearTimer();
+      cleanupAbort();
       reject(err);
     });
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
       clearTimer();
+      cleanupAbort();
       resolve(code ?? 0);
     });
   });
@@ -179,6 +221,8 @@ interface PrepareWorkspaceOptions {
   /** Optional token for cloning private repositories. */
   token?: string;
   onLine: (line: string) => void;
+  /** Abort signal to cancel the clone/fetch mid-flight (issue #33). */
+  signal?: AbortSignal;
 }
 
 /**
@@ -186,7 +230,7 @@ interface PrepareWorkspaceOptions {
  * head or a branch), and return the checked-out commit SHA.
  */
 async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> {
-  const { dir, owner, name, fetchRef, token, onLine } = opts;
+  const { dir, owner, name, fetchRef, token, onLine, signal } = opts;
   const cloneUrl = token
     ? `https://x-access-token:${token}@github.com/${owner}/${name}.git`
     : `https://github.com/${owner}/${name}.git`;
@@ -194,22 +238,28 @@ async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> 
 
   if (!existsSync(dir)) {
     await mkdir(dirname(dir), { recursive: true });
-    await runCommand("git", ["clone", "--depth", "50", cloneUrl, dir], { onLine, mask });
+    await runCommand("git", ["clone", "--depth", "50", cloneUrl, dir], { onLine, mask, signal });
   } else {
-    await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cloneUrl], { mask });
-    await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], { onLine, mask });
+    await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cloneUrl], { mask, signal });
+    await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], {
+      onLine,
+      mask,
+      signal,
+    });
   }
 
   // Fetch the requested ref (PR head ref works for forks too) and check it out.
   const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", fetchRef], {
     onLine,
     mask,
+    signal,
   });
   if (fetchCode !== 0) throw new Error(`git fetch of ${fetchRef} failed (code ${fetchCode})`);
 
   const checkoutCode = await runCommand("git", ["-C", dir, "checkout", "-f", "FETCH_HEAD"], {
     onLine,
     mask,
+    signal,
   });
   if (checkoutCode !== 0) throw new Error(`git checkout failed (code ${checkoutCode})`);
 
@@ -267,6 +317,11 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
   const target = resolveBuildTarget(loaded);
   const { repo, dir, composeProject: project } = target;
 
+  // 停止/破棄要求でビルドを中断できるようにする(issue #33)。controllerの登録は
+  // try 内で行い、この後の更新が投げても finally で確実に解除されるようにする。
+  const controller = new AbortController();
+  const signal = controller.signal;
+
   const preview = await prisma.previewEnvironment.update({
     where: { id: previewId },
     data: { status: "pending", composeProject: project, commitSha: target.knownSha, logs: "" },
@@ -292,6 +347,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
   const mask = token ? [token] : [];
 
   try {
+    activeBuilds.set(previewId, controller);
     // 設定チェックは preview 作成後・try 内で行う。preview 作成前に投げると
     // status が pending のまま残り「待機中」で固まってしまう(issue #8)。
     if (!repo.webService || !repo.internalPort) {
@@ -310,6 +366,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
       fetchRef: target.fetchRef,
       token,
       onLine: log,
+      signal,
     });
     if (sha) {
       log(`Checked out ${sha.slice(0, 7)}`);
@@ -320,7 +377,8 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
       });
     }
 
-    const hostPort = preview.hostPort ?? (await allocateHostPort());
+    // 並列ビルドでのポート衝突を避けるため、確保と同時にDBへ予約する(issue #33)。
+    const hostPort = preview.hostPort ?? (await reserveHostPort(previewId));
     log(`Allocated host port ${hostPort}`);
 
     // Start the tunnel first so its URL is known to the rewrite step.
@@ -378,7 +436,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
           "-v",
           "--remove-orphans",
         ],
-        { cwd: dir, onLine: log, mask },
+        { cwd: dir, onLine: log, mask, signal },
       );
     }
 
@@ -393,6 +451,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
         onLine: log,
         mask,
         timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+        signal,
       });
       if (buildCode !== 0) throw new Error(`docker compose build exited with code ${buildCode}`);
     }
@@ -401,7 +460,7 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
     const code = await runCommand(
       "docker",
       [...composeFiles, "up", "-d", ...(noCache ? [] : ["--build"])],
-      { cwd: dir, onLine: log, mask, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS },
+      { cwd: dir, onLine: log, mask, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS, signal },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
 
@@ -417,11 +476,19 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
       project,
     });
   } catch (e) {
+    stopTunnel(previewId);
+    // 中断された場合は失敗扱いにせず、後続の停止/破棄ジョブに最終ステータスを委ねる(issue #33)。
+    if (e instanceof BuildCancelledError || signal.aborted) {
+      log("Build cancelled by stop/destroy request.");
+      await setStatus("stopping");
+      return;
+    }
     const message = e instanceof Error ? e.message : String(e);
     log(`ERROR: ${message}`);
-    stopTunnel(previewId);
     await setStatus("failed");
     throw e;
+  } finally {
+    activeBuilds.delete(previewId);
   }
 }
 
@@ -443,6 +510,8 @@ export async function destroyPreview(previewId: string): Promise<void> {
   stopLogStream(previewId);
   stopTunnel(previewId);
 
+  // dockerデーモン無応答でジョブが固着しないようアイドルタイムアウトを設ける(issue #33)。
+  const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
   try {
     if (existsSync(dir)) {
       await runCommand(
@@ -459,13 +528,13 @@ export async function destroyPreview(previewId: string): Promise<void> {
           "-v",
           "--remove-orphans",
         ],
-        { cwd: dir, onLine: log },
+        { cwd: dir, onLine: log, timeoutMs },
       );
     } else {
       await runCommand(
         "docker",
         ["compose", "-p", preview.composeProject, "down", "-v", "--remove-orphans"],
-        { onLine: log },
+        { onLine: log, timeoutMs },
       );
     }
     if (existsSync(dir)) {
@@ -480,6 +549,74 @@ export async function destroyPreview(previewId: string): Promise<void> {
     data: { status: "stopped", url: null, hostPort: null },
   });
   emitPreviewStatus(previewId, "stopped");
+}
+
+/**
+ * Stop the preview's containers without removing them (issue #32). Unlike
+ * destroy, the containers, volumes, workspace and allocated host port are kept,
+ * so the preview can be resumed quickly (via restart) without rebuilding.
+ * Frees memory/CPU and the Cloudflare tunnel; sets status to "paused".
+ */
+export async function stopPreview(previewId: string): Promise<void> {
+  const loaded = await loadPreviewWithTarget(previewId);
+  if (!loaded) return;
+  const preview = loaded;
+
+  // 破棄済み・既に停止済み・未作成の preview を "paused" に復活させない(destroy→stop
+  // の順や二重投入での退行を防ぐ)。
+  if (["stopped", "paused", "idle"].includes(preview.status)) return;
+
+  const { repo, dir } = resolveBuildTarget(loaded);
+  const log = (line: string) => emitPreviewLog(previewId, line);
+
+  emitPreviewStatus(previewId, "stopping");
+  await prisma.previewEnvironment.update({
+    where: { id: previewId },
+    data: { status: "stopping" },
+  });
+
+  // 実行時ログストリームとトンネルを止める(コンテナ・ボリューム・workspaceは残す)。
+  stopLogStream(previewId);
+  stopTunnel(previewId);
+
+  const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
+  try {
+    if (existsSync(dir)) {
+      await runCommand(
+        "docker",
+        [
+          "compose",
+          "-f",
+          repo.composePath,
+          "-f",
+          OVERRIDE_FILE,
+          "-p",
+          preview.composeProject,
+          "stop",
+        ],
+        { cwd: dir, onLine: log, timeoutMs },
+      );
+    } else {
+      await runCommand("docker", ["compose", "-p", preview.composeProject, "stop"], {
+        onLine: log,
+        timeoutMs,
+      });
+    }
+  } catch (e) {
+    log(`ERROR during stop: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // ビルドが overrideファイル生成まで進んでいない場合(早期中断など)は再開不能なので、
+  // 偽の "paused" にせず "stopped"(ポート解放)にする(issue #33)。
+  const resumable = existsSync(dir) && existsSync(join(dir, OVERRIDE_FILE));
+  await prisma.previewEnvironment.update({
+    where: { id: previewId },
+    // resumable時のみ hostPort を確保したまま(再開で同じポートを再利用)。
+    data: resumable
+      ? { status: "paused", url: null }
+      : { status: "stopped", url: null, hostPort: null },
+  });
+  emitPreviewStatus(previewId, resumable ? "paused" : "stopped");
 }
 
 /**

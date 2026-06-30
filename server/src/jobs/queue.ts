@@ -1,6 +1,6 @@
 import { prisma } from "../db/client";
 
-export type JobType = "build" | "destroy" | "restart";
+export type JobType = "build" | "destroy" | "restart" | "stop";
 
 export interface JobPayload {
   /** The preview environment this job operates on (PR or branch, issue #25). */
