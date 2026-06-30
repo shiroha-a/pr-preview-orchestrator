@@ -108,6 +108,7 @@ export interface ContainerStat {
 
 export interface SystemMetrics {
   memory: { total: number; used: number; free: number };
+  swap: { total: number; used: number; free: number };
   disk: { total: number; used: number; free: number };
   loadavg: number[];
   containers: ContainerStat[];
