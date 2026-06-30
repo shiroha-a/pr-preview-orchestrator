@@ -172,13 +172,13 @@ onUnmounted(disconnect);
 <template>
   <BaseCard>
     <div
-      class="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-800"
+      class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-800"
     >
       <div class="flex items-center gap-2">
         <span class="text-sm font-semibold">{{ title ?? "プレビュー環境" }}</span>
         <PreviewStatusBadge :status="status" />
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2">
         <template v-if="isActive">
           <span class="flex items-center gap-1 text-xs text-gray-500">
             <Loader2 class="h-3.5 w-3.5 animate-spin" />
