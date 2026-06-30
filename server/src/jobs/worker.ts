@@ -1,6 +1,12 @@
 import { prisma } from "../db/client";
 import { env } from "../env";
-import { buildPreview, destroyPreview, restartPreview, stopPreview } from "../preview/service";
+import {
+  buildPreview,
+  destroyPreview,
+  reattachRunningPreviews,
+  restartPreview,
+  stopPreview,
+} from "../preview/service";
 
 import type { JobPayload } from "./queue";
 
@@ -110,6 +116,11 @@ export async function startWorker(intervalMs = 1500): Promise<void> {
     where: { status: { in: ["pending", "cloning", "building", "stopping"] } },
     data: { status: "failed" },
   });
+
+  // running な preview はコンテナは生きているがCFトンネルが切れているので張り直す。
+  // 起動をブロックしないよう fire-and-forget で実行する。
+  void reattachRunningPreviews();
+
   if (timer) return;
   timer = setInterval(() => void tick(), intervalMs);
   // eslint-disable-next-line no-console
