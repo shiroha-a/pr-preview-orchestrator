@@ -19,6 +19,17 @@
 - 「再開」は既存の`restartPreview`を流用(`docker compose restart`は停止中コンテナも起動する)。
 - 破棄(destroy)は従来通り全削除→`stopped`。
 
+## #33 追加: ビルドの並列化(ワーカー並列化)
+中断方式に加えて、ユーザー要望によりワーカーを並列化する。
+- `env.ts`に`PREVIEW_JOB_CONCURRENCY`(デフォルト3)。
+- `worker.ts`: 同時実行数の上限内でジョブを並列処理。
+  - **preview単位で直列化**(`inFlightPreviews` Set): 同一previewへのbuildとstop/destroyが同時に走らないようにする。
+    中断方式と両立(stop/destroyルートが`cancelBuild`で進行中ビルドをkill → 解放後に該当ジョブを処理)。
+  - ジョブのclaimは`updateMany(where status=queued)`でアトミックに行い、重複tickでの二重取得を防ぐ。
+  - previewIdは同期的に予約してからclaimし、同tick/重複tickでの競合を防ぐ。
+- ポート割り当て競合対策: `ports.ts`に`reserveHostPort(previewId)`を追加。mutexで直列化し、
+  確保と同時にDBへ予約することで並列ビルドの二重割り当てを防ぐ。`buildPreview`で使用。
+
 ## ジョブ/ルート
 - `JobType`に`stop`追加。worker分岐に`stopPreview`。
 - 汎用`POST /preview/:id/stop`、PR用`POST /pulls/:number/preview/stop`を追加。

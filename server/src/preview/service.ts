@@ -9,7 +9,7 @@ import { env } from "../env";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { startLogStream, stopLogStream } from "./logstream";
-import { allocateHostPort } from "./ports";
+import { reserveHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
@@ -376,7 +376,8 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
       });
     }
 
-    const hostPort = preview.hostPort ?? (await allocateHostPort());
+    // 並列ビルドでのポート衝突を避けるため、確保と同時にDBへ予約する(issue #33)。
+    const hostPort = preview.hostPort ?? (await reserveHostPort(previewId));
     log(`Allocated host port ${hostPort}`);
 
     // Start the tunnel first so its URL is known to the rewrite step.

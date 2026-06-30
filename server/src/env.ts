@@ -48,6 +48,10 @@ const envSchema = z.object({
   // output. Large builds keep running as long as they keep producing output.
   PREVIEW_BUILD_TIMEOUT_MS: z.coerce.number().int().default(600000),
 
+  // Max number of preview jobs processed in parallel (issue #33). Builds for
+  // different previews run concurrently; same-preview jobs stay serialized.
+  PREVIEW_JOB_CONCURRENCY: z.coerce.number().int().min(1).default(3),
+
   // Directory of the built web SPA, served by Hono in production (relative to server/).
   WEB_DIST_DIR: z.string().default("../web/dist"),
 });
