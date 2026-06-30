@@ -73,7 +73,8 @@ function matchesFilter(pr: PullRequestDTO, f: PrFilter): boolean {
     case "open":
       return pr.state === "open" && !pr.draft;
     case "draft":
-      return pr.draft;
+      // クローズ済み(またはマージ済み)のDraftはClose/Merged側に入れ、Draftには含めない(issue #37)。
+      return pr.draft && pr.state === "open";
     case "closed":
       return pr.state === "closed";
     case "merged":
