@@ -110,10 +110,10 @@ const filteredPulls = computed(() =>
         <h1 class="mt-1 text-xl font-semibold">{{ owner }}/{{ name }}</h1>
         <p class="mt-1 text-sm text-gray-500">{{ pullRequests.length }} 件のPR</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center justify-end gap-2">
         <RouterLink
           :to="`/repos/${owner}/${name}/settings`"
-          class="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          class="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs whitespace-nowrap text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
           <Settings class="h-3.5 w-3.5" />
           プレビュー設定
