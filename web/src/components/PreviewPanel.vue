@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Eraser, ExternalLink, Loader2, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
+import {
+  Eraser,
+  ExternalLink,
+  Loader2,
+  Pause,
+  Play,
+  RotateCcw,
+  RotateCw,
+  Square,
+} from "lucide-vue-next";
 
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
@@ -16,6 +25,8 @@ export interface PreviewActions {
   start: (noCache: boolean) => Promise<{ previewId: string }>;
   restart: () => Promise<{ previewId: string }>;
   destroy: () => Promise<void>;
+  /** Stop containers without removing them (issue #32). */
+  stop: () => Promise<unknown>;
   refresh: () => Promise<PreviewDTO | null>;
 }
 
@@ -63,7 +74,7 @@ function connect(id: string) {
     const data = JSON.parse((e as MessageEvent).data) as { status?: string };
     if (data.status) {
       status.value = data.status;
-      if (data.status === "running" || data.status === "stopped") void refresh();
+      if (["running", "stopped", "paused"].includes(data.status)) void refresh();
     }
   });
   es.addEventListener("log", (e) => {
@@ -117,6 +128,21 @@ async function destroy() {
   }
 }
 
+// 破棄せずコンテナを停止する(後で再開可能。issue #32)。
+async function stop() {
+  busy.value = true;
+  actionError.value = null;
+  try {
+    await props.actions.stop();
+    status.value = "stopping";
+    if (previewId.value) connect(previewId.value);
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : "停止に失敗しました";
+  } finally {
+    busy.value = false;
+  }
+}
+
 // ビルドせずにコンテナを再起動(トンネルは流用)。
 async function restart() {
   busy.value = true;
@@ -155,7 +181,12 @@ onUnmounted(disconnect);
           処理中...
         </span>
         <template v-else>
-          <BaseButton size="sm" :disabled="busy" @click="start()">
+          <!-- 一時停止からの再開(issue #32) -->
+          <BaseButton v-if="status === 'paused'" size="sm" :disabled="busy" @click="restart">
+            <Play class="h-4 w-4" />
+            再開
+          </BaseButton>
+          <BaseButton v-else size="sm" :disabled="busy" @click="start()">
             <component :is="status === 'running' ? RotateCw : Play" class="h-4 w-4" />
             {{ status === "running" ? "再ビルド" : "プレビューを起動" }}
           </BaseButton>
@@ -179,6 +210,18 @@ onUnmounted(disconnect);
           >
             <Eraser class="h-4 w-4" />
             キャッシュ破棄して再ビルド
+          </BaseButton>
+          <!-- 破棄せず停止(後で再開可能。issue #32) -->
+          <BaseButton
+            v-if="status === 'running'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            title="破棄せずコンテナを停止します(後で再開可能)"
+            @click="stop"
+          >
+            <Pause class="h-4 w-4" />
+            停止(保持)
           </BaseButton>
           <BaseButton v-if="canStop" size="sm" variant="danger" :disabled="busy" @click="destroy">
             <Square class="h-4 w-4" />

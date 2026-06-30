@@ -4,7 +4,7 @@ import { streamSSE } from "hono/streaming";
 import { prisma } from "../db/client";
 import { enqueueJob } from "../jobs/queue";
 import { subscribePreview } from "../preview/events";
-import { pruneBuilderCache } from "../preview/service";
+import { cancelBuild, pruneBuilderCache } from "../preview/service";
 
 export const previewRoutes = new Hono();
 
@@ -48,11 +48,24 @@ previewRoutes.post("/:id/restart", async (c) => {
   return c.json({ jobId, previewId: id });
 });
 
+/** Stop a preview's containers without removing them (by id; issue #32). */
+previewRoutes.post("/:id/stop", async (c) => {
+  const id = c.req.param("id");
+  const preview = await prisma.previewEnvironment.findUnique({ where: { id } });
+  if (!preview) return c.json({ error: "Preview not found" }, 404);
+  // ビルド中なら中断してワーカーを解放する(issue #33)。
+  cancelBuild(id);
+  const jobId = await enqueueJob("stop", { previewId: id });
+  return c.json({ jobId, previewId: id });
+});
+
 /** Tear down a preview (by id; issue #25). */
 previewRoutes.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const preview = await prisma.previewEnvironment.findUnique({ where: { id } });
   if (!preview) return c.json({ ok: true });
+  // ビルド中なら中断してワーカーを解放する(issue #33)。
+  cancelBuild(id);
   const jobId = await enqueueJob("destroy", { previewId: id });
   return c.json({ jobId });
 });

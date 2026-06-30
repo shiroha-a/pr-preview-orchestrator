@@ -10,7 +10,12 @@ import {
 } from "../github/pulls";
 import { addRepository, listRepositoryBranches } from "../github/repositories";
 import { enqueueJob } from "../jobs/queue";
-import { branchComposeProjectName, composeProjectName, destroyPreview } from "../preview/service";
+import {
+  branchComposeProjectName,
+  cancelBuild,
+  composeProjectName,
+  destroyPreview,
+} from "../preview/service";
 
 export const repositoriesRoutes = new Hono();
 
@@ -328,8 +333,29 @@ repositoriesRoutes.delete("/:owner/:name/pulls/:number/preview", async (c) => {
     where: { pullRequestId: pull.id },
   });
   if (!preview) return c.json({ ok: true });
+  // ビルド中なら中断してワーカーを解放する(issue #33)。
+  cancelBuild(preview.id);
   const jobId = await enqueueJob("destroy", { previewId: preview.id });
   return c.json({ jobId });
+});
+
+// Stop containers without removing them (issue #32).
+repositoriesRoutes.post("/:owner/:name/pulls/:number/preview/stop", async (c) => {
+  const { owner, name } = c.req.param();
+  const number = Number(c.req.param("number"));
+  if (!Number.isInteger(number)) return c.json({ error: "Invalid pull request number" }, 400);
+  const pull = await findPull(owner, name, number);
+  if (!pull) return c.json({ error: "Pull request not found" }, 404);
+  const preview = await prisma.previewEnvironment.findUnique({
+    where: { pullRequestId: pull.id },
+  });
+  if (!preview) {
+    return c.json({ error: "プレビュー環境がありません。先に起動してください。" }, 400);
+  }
+  // ビルド中なら中断してワーカーを解放する(issue #33)。
+  cancelBuild(preview.id);
+  const jobId = await enqueueJob("stop", { previewId: preview.id });
+  return c.json({ jobId, previewId: preview.id });
 });
 
 // Restart containers without rebuilding (issue #15).

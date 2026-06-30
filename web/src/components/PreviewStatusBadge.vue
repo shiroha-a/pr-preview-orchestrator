@@ -14,6 +14,7 @@ const META: Record<string, { label: string; tone: BadgeTone }> = {
   running: { label: "稼働中", tone: "green" },
   stopping: { label: "停止処理中", tone: "amber" },
   stopped: { label: "停止済み", tone: "gray" },
+  paused: { label: "一時停止中", tone: "blue" },
   failed: { label: "失敗", tone: "red" },
 };
 
