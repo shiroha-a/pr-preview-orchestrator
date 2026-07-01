@@ -2,6 +2,7 @@
   "name": "pr-preview-orchestrator",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "workspaces": [
     "server",
     "web"
