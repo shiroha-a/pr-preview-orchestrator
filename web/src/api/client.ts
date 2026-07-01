@@ -37,6 +37,13 @@ export interface CreateUserInput {
   password: string;
 }
 
+/** Build options for starting/rebuilding a preview (issue #20/#41/#42). */
+export interface StartPreviewOptions {
+  noCache?: boolean;
+  resetVolumes?: boolean;
+  keepTunnel?: boolean;
+}
+
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
 
@@ -95,10 +102,10 @@ export const api = {
       `/repositories/${owner}/${name}/pulls/${number}/preview`,
     ),
 
-  startPreview: (owner: string, name: string, number: number, noCache = false) =>
+  startPreview: (owner: string, name: string, number: number, opts: StartPreviewOptions = {}) =>
     request<{ jobId: string; previewId: string }>(
       `/repositories/${owner}/${name}/pulls/${number}/preview`,
-      { method: "POST", body: JSON.stringify({ noCache }) },
+      { method: "POST", body: JSON.stringify(opts) },
     ),
 
   restartPreview: (owner: string, name: string, number: number) =>
@@ -129,10 +136,15 @@ export const api = {
   getBranchPreviews: (owner: string, name: string) =>
     request<{ previews: PreviewDTO[] }>(`/repositories/${owner}/${name}/branch-previews`),
 
-  startBranchPreview: (owner: string, name: string, branch: string, noCache = false) =>
+  startBranchPreview: (
+    owner: string,
+    name: string,
+    branch: string,
+    opts: StartPreviewOptions = {},
+  ) =>
     request<{ jobId: string; previewId: string }>(`/repositories/${owner}/${name}/branch-preview`, {
       method: "POST",
-      body: JSON.stringify({ branch, noCache }),
+      body: JSON.stringify({ branch, ...opts }),
     }),
 
   getPreviewById: (id: string) => request<{ preview: PreviewDTO | null }>(`/preview/${id}`),

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { z } from "zod";
 
 import { prisma } from "../db/client";
@@ -22,6 +23,23 @@ export const repositoriesRoutes = new Hono();
 /** Resolve a cached repository by owner/name or return null. */
 async function findRepo(owner: string, name: string) {
   return prisma.repository.findUnique({ where: { owner_name: { owner, name } } });
+}
+
+/**
+ * Parse optional build option flags from a request body:
+ * noCache (#20), resetVolumes (#41), keepTunnel (#42). Body is optional.
+ */
+async function parseBuildOptions(
+  c: Context,
+): Promise<{ noCache: boolean; resetVolumes: boolean; keepTunnel: boolean }> {
+  const body = await c.req
+    .json<{ noCache?: boolean; resetVolumes?: boolean; keepTunnel?: boolean }>()
+    .catch(() => ({}) as { noCache?: boolean; resetVolumes?: boolean; keepTunnel?: boolean });
+  return {
+    noCache: body.noCache === true,
+    resetVolumes: body.resetVolumes === true,
+    keepTunnel: body.keepTunnel === true,
+  };
 }
 
 // --- Repositories ---
@@ -300,9 +318,8 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
   });
   if (!pull) return c.json({ error: "Pull request not found" }, 404);
 
-  // ボディは任意。キャッシュ破棄再ビルド時のみ { noCache: true } が送られる(issue #20)。
-  const body = await c.req.json<{ noCache?: boolean }>().catch(() => ({}) as { noCache?: boolean });
-  const noCache = body.noCache === true;
+  // ボディは任意。ビルドオプション(noCache #20 / resetVolumes #41 / keepTunnel #42)。
+  const opts = await parseBuildOptions(c);
 
   // プレビュー設定が未設定なら起動しない(pending で固まるのを防ぐ。issue #8)。
   if (!repository.webService || !repository.internalPort) {
@@ -325,7 +342,7 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview", async (c) => {
     },
     update: { status: "pending" },
   });
-  const jobId = await enqueueJob("build", { previewId: preview.id, noCache });
+  const jobId = await enqueueJob("build", { previewId: preview.id, ...opts });
   return c.json({ jobId, previewId: preview.id });
 });
 
@@ -415,11 +432,23 @@ repositoriesRoutes.post("/:owner/:name/branch-preview", async (c) => {
   if (!repository) return c.json({ error: "Repository not found" }, 404);
 
   const body = await c.req
-    .json<{ branch?: string; noCache?: boolean }>()
-    .catch(() => ({}) as { branch?: string; noCache?: boolean });
+    .json<{ branch?: string; noCache?: boolean; resetVolumes?: boolean; keepTunnel?: boolean }>()
+    .catch(
+      () =>
+        ({}) as {
+          branch?: string;
+          noCache?: boolean;
+          resetVolumes?: boolean;
+          keepTunnel?: boolean;
+        },
+    );
   const branch = body.branch?.trim();
   if (!branch) return c.json({ error: "branch を指定してください" }, 400);
-  const noCache = body.noCache === true;
+  const opts = {
+    noCache: body.noCache === true,
+    resetVolumes: body.resetVolumes === true,
+    keepTunnel: body.keepTunnel === true,
+  };
 
   if (!repository.webService || !repository.internalPort) {
     return c.json(
@@ -442,6 +471,6 @@ repositoriesRoutes.post("/:owner/:name/branch-preview", async (c) => {
     },
     update: { status: "pending" },
   });
-  const jobId = await enqueueJob("build", { previewId: preview.id, noCache });
+  const jobId = await enqueueJob("build", { previewId: preview.id, ...opts });
   return c.json({ jobId, previewId: preview.id });
 });

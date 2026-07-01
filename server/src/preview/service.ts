@@ -308,10 +308,20 @@ function hostnameOf(url: string, fallback: string): string {
  * file), generate a compose override, optionally reset volumes, then
  * `docker compose up`.
  *
- * When `noCache` is true the images are rebuilt from scratch via
- * `docker compose build --no-cache` before starting (issue #20).
+ * Build options (issue #20/#41/#42):
+ * - `noCache`: rebuild images from scratch (`docker compose build --no-cache`).
+ * - `resetVolumes`: destroy volumes before building for a fresh DB.
+ * - `keepTunnel`: reuse the existing tunnel/URL instead of creating a new one
+ *   (keeps the app's baked-in URL valid; avoids DB regeneration for e.g. Misskey).
  */
-export async function buildPreview(previewId: string, noCache = false): Promise<void> {
+export interface BuildOptions {
+  noCache?: boolean;
+  resetVolumes?: boolean;
+  keepTunnel?: boolean;
+}
+
+export async function buildPreview(previewId: string, opts: BuildOptions = {}): Promise<void> {
+  const { noCache = false, resetVolumes = false, keepTunnel = false } = opts;
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) throw new Error("Preview environment not found");
   const target = resolveBuildTarget(loaded);
@@ -384,13 +394,19 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
     // Start the tunnel first so its URL is known to the rewrite step.
     let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
     if (env.PREVIEW_TUNNEL) {
-      try {
-        log("Starting Cloudflare Quick Tunnel...");
-        url = await startTunnel(previewId, hostPort);
-        log(`Tunnel ready: ${url}`);
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
+      // keepTunnel時は既存トンネルを流用しURLを維持する(DB再生成不要。issue #42)。
+      if (keepTunnel && isTunnelAlive(previewId) && preview.url) {
+        url = preview.url;
+        log(`Reusing existing tunnel: ${url}`);
+      } else {
+        try {
+          log("Starting Cloudflare Quick Tunnel...");
+          url = await startTunnel(previewId, hostPort);
+          log(`Tunnel ready: ${url}`);
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
+        }
       }
     }
 
@@ -420,7 +436,8 @@ export async function buildPreview(previewId: string, noCache = false): Promise<
 
     await setStatus("building", { hostPort, url });
 
-    if (repo.resetVolumes) {
+    // リポジトリ設定またはオンデマンド要求(issue #41)でボリュームを破棄する。
+    if (repo.resetVolumes || resetVolumes) {
       log("Resetting volumes (docker compose down -v)...");
       await runCommand(
         "docker",
