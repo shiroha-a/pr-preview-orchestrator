@@ -99,11 +99,12 @@ export interface CommentDTO {
   line: number | null;
 }
 
-export interface ContainerStat {
-  name: string;
-  cpu: string;
-  mem: string;
-  memUsage: string;
+// プレビュー(composeプロジェクト)単位に集計したリソース使用量。
+export interface PreviewUsage {
+  label: string;
+  cpu: number; // 合計CPU使用率(%)
+  memBytes: number; // 合計使用メモリ(バイト)
+  containers: number; // コンテナ数
 }
 
 export interface SystemMetrics {
@@ -111,7 +112,7 @@ export interface SystemMetrics {
   swap: { total: number; used: number; free: number };
   disk: { total: number; used: number; free: number };
   loadavg: number[];
-  containers: ContainerStat[];
+  previews: PreviewUsage[];
 }
 
 export interface AppConfig {

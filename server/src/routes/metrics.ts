@@ -4,6 +4,8 @@ import os from "node:os";
 
 import { Hono } from "hono";
 
+import { prisma } from "../db/client";
+
 export const metricsRoutes = new Hono();
 
 /**
@@ -23,15 +25,41 @@ async function readSwap(): Promise<{ total: number; used: number; free: number }
   }
 }
 
-interface ContainerStat {
+interface RawContainerStat {
   name: string;
-  cpu: string;
-  mem: string;
-  memUsage: string;
+  cpu: number; // percent
+  memBytes: number; // used memory in bytes
+}
+
+/** "1.78%" -> 1.78(不正値は 0)。 */
+function parseCpu(s: string): number {
+  const v = parseFloat(String(s).replace("%", ""));
+  return Number.isFinite(v) ? v : 0;
+}
+
+/** "859.5MiB" -> バイト数(docker は 1024 基数の *iB 単位を使う)。 */
+function parseBytes(s: string): number {
+  const m = String(s)
+    .trim()
+    .match(/^([\d.]+)\s*([A-Za-z]+)$/);
+  if (!m) return 0;
+  const val = parseFloat(m[1]);
+  const mult: Record<string, number> = {
+    b: 1,
+    kib: 1024,
+    mib: 1024 ** 2,
+    gib: 1024 ** 3,
+    tib: 1024 ** 4,
+    kb: 1000,
+    mb: 1000 ** 2,
+    gb: 1000 ** 3,
+    tb: 1000 ** 4,
+  };
+  return Number.isFinite(val) ? val * (mult[m[2].toLowerCase()] ?? 1) : 0;
 }
 
 /** Collect `docker stats` for preview containers (best-effort; empty on failure). */
-function dockerStats(): Promise<ContainerStat[]> {
+function dockerStats(): Promise<RawContainerStat[]> {
   return new Promise((resolve) => {
     const child = spawn("docker", ["stats", "--no-stream", "--format", "{{json .}}"]);
     let out = "";
@@ -40,7 +68,7 @@ function dockerStats(): Promise<ContainerStat[]> {
     });
     child.on("error", () => resolve([]));
     child.on("close", () => {
-      const stats: ContainerStat[] = [];
+      const stats: RawContainerStat[] = [];
       for (const line of out.split("\n")) {
         if (!line.trim()) continue;
         try {
@@ -49,9 +77,9 @@ function dockerStats(): Promise<ContainerStat[]> {
           if (typeof j.Name === "string" && j.Name.startsWith("preview-")) {
             stats.push({
               name: j.Name,
-              cpu: j.CPUPerc ?? "",
-              mem: j.MemPerc ?? "",
-              memUsage: j.MemUsage ?? "",
+              cpu: parseCpu(j.CPUPerc ?? ""),
+              // MemUsage は "used / limit"。used 部分のみをバイトに変換する。
+              memBytes: parseBytes((j.MemUsage ?? "").split("/")[0] ?? ""),
             });
           }
         } catch {
@@ -63,7 +91,50 @@ function dockerStats(): Promise<ContainerStat[]> {
   });
 }
 
-/** Host memory / disk usage, load average, and per-container stats. */
+/** Per-preview aggregated resource usage(プレビュー単位のCPU/メモリ合計)。 */
+interface PreviewUsage {
+  label: string;
+  cpu: number;
+  memBytes: number;
+  containers: number;
+}
+
+/**
+ * Aggregate docker stats per preview (compose project). Each preview's
+ * containers (app/db/redis 等)を合算し、システム最大メモリの繰り返し表示をやめる。
+ */
+async function previewUsage(): Promise<PreviewUsage[]> {
+  const raw = await dockerStats();
+  if (raw.length === 0) return [];
+
+  const previews = await prisma.previewEnvironment.findMany({
+    include: { pullRequest: { include: { repository: true } }, repository: true },
+  });
+
+  const result: PreviewUsage[] = [];
+  for (const p of previews) {
+    const proj = p.composeProject;
+    // コンテナ名は "<project>-<service>-<index>"。プロジェクト名+区切りで前方一致させる。
+    const mine = raw.filter((s) => s.name.startsWith(`${proj}-`) || s.name.startsWith(`${proj}_`));
+    if (mine.length === 0) continue;
+
+    const repo = p.pullRequest?.repository ?? p.repository;
+    let label = proj;
+    if (p.pullRequest && repo) label = `${repo.owner}/${repo.name} #${p.pullRequest.number}`;
+    else if (repo && p.branchRef) label = `${repo.owner}/${repo.name} @${p.branchRef}`;
+
+    result.push({
+      label,
+      cpu: mine.reduce((a, s) => a + s.cpu, 0),
+      memBytes: mine.reduce((a, s) => a + s.memBytes, 0),
+      containers: mine.length,
+    });
+  }
+  result.sort((a, b) => b.memBytes - a.memBytes);
+  return result;
+}
+
+/** Host memory / disk / swap usage, load average, and per-preview stats. */
 metricsRoutes.get("/", async (c) => {
   const memTotal = os.totalmem();
   const memFree = os.freemem();
@@ -81,13 +152,13 @@ metricsRoutes.get("/", async (c) => {
   }
 
   const swap = await readSwap();
-  const containers = await dockerStats();
+  const previews = await previewUsage();
 
   return c.json({
     memory: { total: memTotal, used: memTotal - memFree, free: memFree },
     swap,
     disk,
     loadavg: os.loadavg(),
-    containers,
+    previews,
   });
 });

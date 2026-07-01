@@ -12,6 +12,11 @@ let timer: ReturnType<typeof setInterval> | undefined;
 function gb(bytes: number): string {
   return (bytes / 1024 ** 3).toFixed(1);
 }
+// プレビュー合計メモリの表示(1GiB以上はGiB、未満はMiB)。
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+  return `${(bytes / 1024 ** 2).toFixed(0)} MiB`;
+}
 function pct(used: number, total: number): number {
   return total > 0 ? Math.round((used / total) * 100) : 0;
 }
@@ -99,13 +104,15 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- swapが設定されているホストのみ表示(issue #39) -->
-        <div v-if="metrics.swap.total > 0">
+        <!-- スワップ(issue #39)。未設定ホストは「なし」表示だが行は常に描画し、
+             ローディングのスケルトンと高さを揃えてレイアウトシフトを防ぐ(408f88c 回帰対策)。 -->
+        <div>
           <div class="mb-1 flex justify-between text-xs text-gray-500">
             <span>スワップ</span>
-            <span>
+            <span v-if="metrics.swap.total > 0">
               {{ gb(metrics.swap.used) }} / {{ gb(metrics.swap.total) }} GB ({{ swapPct }}%)
             </span>
+            <span v-else>なし</span>
           </div>
           <div class="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
             <div
@@ -131,31 +138,35 @@ onUnmounted(() => {
         </div>
 
         <!-- 件数で高さが変わるため既定で折りたたみ、見出しのみ常時表示して高さを固定する。 -->
+        <!-- プレビュー単位でCPU/メモリを合算表示(コンテナ毎の重複を排除)。 -->
         <details class="border-t border-gray-100 pt-2 dark:border-gray-800">
           <summary class="cursor-pointer text-xs font-medium text-gray-500 select-none">
-            プレビューコンテナ ({{ metrics.containers.length }})
+            プレビュー ({{ metrics.previews.length }})
           </summary>
           <div class="mt-2 space-y-1">
-            <p v-if="metrics.containers.length === 0" class="text-xs text-gray-400">
-              稼働中のコンテナはありません。
+            <p v-if="metrics.previews.length === 0" class="text-xs text-gray-400">
+              稼働中のプレビューはありません。
             </p>
             <div
-              v-for="cont in metrics.containers"
-              :key="cont.name"
+              v-for="pv in metrics.previews"
+              :key="pv.label"
               class="flex items-center justify-between gap-2 text-xs"
             >
-              <code class="truncate text-gray-600 dark:text-gray-300">{{ cont.name }}</code>
+              <span class="flex min-w-0 items-center gap-1.5">
+                <code class="truncate text-gray-600 dark:text-gray-300">{{ pv.label }}</code>
+                <span class="shrink-0 text-gray-400">×{{ pv.containers }}</span>
+              </span>
               <span class="shrink-0 text-gray-500">
-                CPU {{ cont.cpu }} ・ MEM {{ cont.memUsage }}
+                CPU {{ pv.cpu.toFixed(1) }}% ・ MEM {{ fmtBytes(pv.memBytes) }}
               </span>
             </div>
           </div>
         </details>
       </template>
 
-      <!-- 読み込み中: メモリ/ディスク行と同じ高さのプレースホルダで枠を固定する。 -->
+      <!-- 読み込み中: メモリ/スワップ/ディスクの3行と同じ高さのプレースホルダで枠を固定する。 -->
       <template v-else>
-        <div v-for="n in 2" :key="n" class="space-y-1" aria-hidden="true">
+        <div v-for="n in 3" :key="n" class="space-y-1" aria-hidden="true">
           <div class="h-4 w-1/3 rounded bg-gray-100 dark:bg-gray-800"></div>
           <div class="h-2 rounded-full bg-gray-100 dark:bg-gray-800"></div>
         </div>
