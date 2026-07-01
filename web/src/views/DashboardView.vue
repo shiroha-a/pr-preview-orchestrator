@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { ArrowRight, ExternalLink, GitPullRequest } from "lucide-vue-next";
+import { ArrowRight, ExternalLink, GitPullRequest, Plus } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { PreviewListItem, RepositoryDTO } from "../types";
+import AddRepositoryModal from "../components/AddRepositoryModal.vue";
 import PreviewStatusBadge from "../components/PreviewStatusBadge.vue";
 import SystemMetrics from "../components/SystemMetrics.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
+
+const showAddRepo = ref(false);
 
 const loading = ref(true);
 const error = ref<string | null>(null);
@@ -100,12 +103,20 @@ onMounted(load);
       </section>
 
       <section class="space-y-3">
-        <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">リポジトリ</h2>
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">リポジトリ</h2>
+          <button
+            class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            title="リポジトリを追加"
+            @click="showAddRepo = true"
+          >
+            <Plus class="h-3.5 w-3.5" />
+            <span class="hidden sm:inline">追加</span>
+          </button>
+        </div>
         <BaseCard v-if="repositories.length === 0">
           <div class="p-4 text-sm text-gray-500">
-            リポジトリがありません。
-            <RouterLink to="/settings" class="text-blue-600 hover:underline">設定ページ</RouterLink>
-            から owner/name を指定して追加してください。
+            リポジトリがありません。右上の「追加」から owner/name を指定して追加してください。
           </div>
         </BaseCard>
         <div v-else class="grid gap-3 sm:grid-cols-2">
@@ -130,5 +141,7 @@ onMounted(load);
         </div>
       </section>
     </template>
+
+    <AddRepositoryModal v-if="showAddRepo" @close="showAddRepo = false" @added="load" />
   </div>
 </template>
