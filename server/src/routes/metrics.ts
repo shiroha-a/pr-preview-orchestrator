@@ -1,10 +1,27 @@
 import { spawn } from "node:child_process";
-import { statfs } from "node:fs/promises";
+import { readFile, statfs } from "node:fs/promises";
 import os from "node:os";
 
 import { Hono } from "hono";
 
 export const metricsRoutes = new Hono();
+
+/**
+ * Host swap usage from /proc/meminfo (Linux). Returns zeros when unavailable
+ * (non-Linux or no swap configured).
+ */
+async function readSwap(): Promise<{ total: number; used: number; free: number }> {
+  try {
+    const content = await readFile("/proc/meminfo", "utf-8");
+    const totalKb = Number(content.match(/^SwapTotal:\s+(\d+)/m)?.[1] ?? 0);
+    const freeKb = Number(content.match(/^SwapFree:\s+(\d+)/m)?.[1] ?? 0);
+    const total = totalKb * 1024;
+    const free = freeKb * 1024;
+    return { total, used: total - free, free };
+  } catch {
+    return { total: 0, used: 0, free: 0 };
+  }
+}
 
 interface ContainerStat {
   name: string;
@@ -63,10 +80,12 @@ metricsRoutes.get("/", async (c) => {
     // statfs に失敗した場合は 0 のまま返す。
   }
 
+  const swap = await readSwap();
   const containers = await dockerStats();
 
   return c.json({
     memory: { total: memTotal, used: memTotal - memFree, free: memFree },
+    swap,
     disk,
     loadavg: os.loadavg(),
     containers,

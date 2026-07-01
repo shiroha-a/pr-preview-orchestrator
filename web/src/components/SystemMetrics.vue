@@ -24,6 +24,9 @@ function barColor(p: number): string {
 const memPct = computed(() =>
   metrics.value ? pct(metrics.value.memory.used, metrics.value.memory.total) : 0,
 );
+const swapPct = computed(() =>
+  metrics.value ? pct(metrics.value.swap.used, metrics.value.swap.total) : 0,
+);
 const diskPct = computed(() =>
   metrics.value ? pct(metrics.value.disk.used, metrics.value.disk.total) : 0,
 );
@@ -92,6 +95,22 @@ onUnmounted(() => {
             <div
               :class="['h-full transition-all', barColor(memPct)]"
               :style="{ width: memPct + '%' }"
+            />
+          </div>
+        </div>
+
+        <!-- swapが設定されているホストのみ表示(issue #39) -->
+        <div v-if="metrics.swap.total > 0">
+          <div class="mb-1 flex justify-between text-xs text-gray-500">
+            <span>スワップ</span>
+            <span>
+              {{ gb(metrics.swap.used) }} / {{ gb(metrics.swap.total) }} GB ({{ swapPct }}%)
+            </span>
+          </div>
+          <div class="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div
+              :class="['h-full transition-all', barColor(swapPct)]"
+              :style="{ width: swapPct + '%' }"
             />
           </div>
         </div>
