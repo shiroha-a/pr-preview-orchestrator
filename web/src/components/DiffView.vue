@@ -5,13 +5,22 @@ import "diff2html/bundles/css/diff2html.min.css";
 
 const props = defineProps<{ diff: string }>();
 
+// 追加のみ/削除のみのファイルでは、0側のカウント(+0 / -0)を省略する(issue #43)。
+// diff2html に省略オプションが無いため、カウントspanのみを対象に後処理する。
+function omitZeroCounts(rawHtml: string): string {
+  return rawHtml
+    .replace(/<span class="[^"]*d2h-lines-added[^"]*">\+0<\/span>/g, "")
+    .replace(/<span class="[^"]*d2h-lines-deleted[^"]*">-0<\/span>/g, "");
+}
+
 const rendered = computed(() => {
   if (!props.diff.trim()) return "";
-  return renderDiffHtml(props.diff, {
+  const raw = renderDiffHtml(props.diff, {
     drawFileList: true,
     matching: "lines",
     outputFormat: "line-by-line",
   });
+  return omitZeroCounts(raw);
 });
 </script>
 
