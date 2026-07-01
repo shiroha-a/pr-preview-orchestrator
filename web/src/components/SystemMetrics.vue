@@ -147,19 +147,30 @@ onUnmounted(() => {
             <p v-if="metrics.previews.length === 0" class="text-xs text-gray-400">
               稼働中のプレビューはありません。
             </p>
-            <div
-              v-for="pv in metrics.previews"
-              :key="pv.label"
-              class="flex items-center justify-between gap-2 text-xs"
-            >
-              <span class="flex min-w-0 items-center gap-1.5">
-                <code class="truncate text-gray-600 dark:text-gray-300">{{ pv.label }}</code>
-                <span class="shrink-0 text-gray-400">×{{ pv.containers }}</span>
-              </span>
-              <span class="shrink-0 text-gray-500">
-                CPU {{ pv.cpu.toFixed(1) }}% ・ MEM {{ fmtBytes(pv.memBytes) }}
-              </span>
-            </div>
+            <!-- PR(プレビュー)毎にさらに折りたたみ、展開で個別コンテナを表示する(2重折りたたみ)。 -->
+            <details v-for="pv in metrics.previews" :key="pv.label">
+              <summary
+                class="cursor-pointer text-xs text-gray-600 select-none marker:text-gray-400 dark:text-gray-300"
+              >
+                {{ pv.label }}
+                <span class="text-gray-400">×{{ pv.containers.length }}</span>
+                <span class="text-gray-500">
+                  ・ CPU {{ pv.cpu.toFixed(1) }}% ・ MEM {{ fmtBytes(pv.memBytes) }}
+                </span>
+              </summary>
+              <div class="mt-1 space-y-0.5 pl-4">
+                <div
+                  v-for="c in pv.containers"
+                  :key="c.name"
+                  class="flex items-center justify-between gap-2 text-xs text-gray-500"
+                >
+                  <code class="truncate">{{ c.name }}</code>
+                  <span class="shrink-0">
+                    CPU {{ c.cpu.toFixed(1) }}% ・ MEM {{ fmtBytes(c.memBytes) }}
+                  </span>
+                </div>
+              </div>
+            </details>
           </div>
         </details>
       </template>
