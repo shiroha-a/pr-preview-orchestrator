@@ -1,17 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import {
-  Database,
-  Eraser,
-  ExternalLink,
-  Link,
-  Loader2,
-  Pause,
-  Play,
-  RotateCcw,
-  RotateCw,
-  Square,
-} from "lucide-vue-next";
+import { ExternalLink, Loader2, Pause, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
 
 import type { StartPreviewOptions } from "../api/client";
 import type { PreviewDTO } from "../types";
@@ -49,6 +38,13 @@ const logs = ref<string[]>(
 );
 const actionError = ref<string | null>(null);
 const busy = ref(false);
+
+// 再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約)。
+const rebuildOpts = ref<StartPreviewOptions>({
+  noCache: false,
+  keepTunnel: false,
+  resetVolumes: false,
+});
 
 const ACTIVE = ["pending", "cloning", "building", "stopping"];
 const isActive = computed(() => ACTIVE.includes(status.value));
@@ -118,6 +114,11 @@ async function start(opts: StartPreviewOptions = {}) {
   } finally {
     busy.value = false;
   }
+}
+
+// チェックボックスで選んだオプションを付けて再ビルドする。
+function rebuild() {
+  void start({ ...rebuildOpts.value });
 }
 
 async function destroy() {
@@ -201,15 +202,62 @@ onUnmounted(disconnect);
           </BaseButton>
         </template>
         <template v-else>
+          <!-- 稼働中の再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約) -->
+          <div
+            v-if="status === 'running'"
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300"
+          >
+            <label
+              class="inline-flex items-center gap-1"
+              title="ビルドキャッシュを破棄して再ビルド"
+            >
+              <input
+                v-model="rebuildOpts.noCache"
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-blue-600"
+              />
+              キャッシュ破棄
+            </label>
+            <label
+              class="inline-flex items-center gap-1"
+              title="トンネル(URL)を維持したまま再ビルド(DB再生成不要)"
+            >
+              <input
+                v-model="rebuildOpts.keepTunnel"
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-blue-600"
+              />
+              トンネル維持
+            </label>
+            <label
+              class="inline-flex items-center gap-1"
+              title="ボリューム(DB等)を破棄して初期化してから再ビルド"
+            >
+              <input
+                v-model="rebuildOpts.resetVolumes"
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-blue-600"
+              />
+              ボリューム破棄
+            </label>
+          </div>
+
           <!-- 一時停止からの再開(issue #32) -->
           <BaseButton v-if="status === 'paused'" size="sm" :disabled="busy" @click="restart">
             <Play class="h-4 w-4" />
             再開
           </BaseButton>
-          <BaseButton v-else size="sm" :disabled="busy" @click="start()">
-            <component :is="status === 'running' ? RotateCw : Play" class="h-4 w-4" />
-            {{ status === "running" ? "再ビルド" : "プレビューを起動" }}
+          <!-- 稼働中: チェックボックスで選んだオプションを付けて再ビルド -->
+          <BaseButton v-else-if="status === 'running'" size="sm" :disabled="busy" @click="rebuild">
+            <RotateCw class="h-4 w-4" />
+            再ビルド
           </BaseButton>
+          <!-- 未作成/停止/失敗: 起動 -->
+          <BaseButton v-else size="sm" :disabled="busy" @click="start()">
+            <Play class="h-4 w-4" />
+            プレビューを起動
+          </BaseButton>
+
           <BaseButton
             v-if="status === 'running'"
             size="sm"
@@ -219,41 +267,6 @@ onUnmounted(disconnect);
           >
             <RotateCcw class="h-4 w-4" />
             再起動
-          </BaseButton>
-          <BaseButton
-            v-if="status === 'running'"
-            size="sm"
-            variant="secondary"
-            :disabled="busy"
-            title="ビルドキャッシュを破棄して再ビルドします"
-            @click="start({ noCache: true })"
-          >
-            <Eraser class="h-4 w-4" />
-            キャッシュ破棄して再ビルド
-          </BaseButton>
-          <!-- トンネル(URL)を維持したまま再ビルド(issue #42) -->
-          <BaseButton
-            v-if="status === 'running'"
-            size="sm"
-            variant="secondary"
-            :disabled="busy"
-            title="トンネル(URL)を維持したまま再ビルドします(DB再生成不要)"
-            @click="start({ keepTunnel: true })"
-          >
-            <Link class="h-4 w-4" />
-            トンネル維持で再ビルド
-          </BaseButton>
-          <!-- ボリュームを破棄して初期化再ビルド(issue #41) -->
-          <BaseButton
-            v-if="status === 'running'"
-            size="sm"
-            variant="secondary"
-            :disabled="busy"
-            title="ボリューム(DB等)を破棄して初期化してから再ビルドします"
-            @click="start({ resetVolumes: true })"
-          >
-            <Database class="h-4 w-4" />
-            ボリューム破棄して再ビルド
           </BaseButton>
           <!-- 破棄せず停止(後で再開可能。issue #32) -->
           <BaseButton
