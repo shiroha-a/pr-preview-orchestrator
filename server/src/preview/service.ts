@@ -12,7 +12,7 @@ import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
-import { isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
+import { getTunnelUrl, isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
 
@@ -395,7 +395,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
     if (env.PREVIEW_TUNNEL) {
       // keepTunnel時は既存トンネルを流用しURLを維持する(DB再生成不要。issue #42)。
-      if (keepTunnel && isTunnelAlive(previewId) && preview.url) {
+      if (keepTunnel && (await isTunnelAlive(previewId)) && preview.url) {
         url = preview.url;
         log(`Reusing existing tunnel: ${url}`);
       } else {
@@ -493,7 +493,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       project,
     });
   } catch (e) {
-    stopTunnel(previewId);
+    await stopTunnel(previewId);
     // 中断された場合は失敗扱いにせず、後続の停止/破棄ジョブに最終ステータスを委ねる(issue #33)。
     if (e instanceof BuildCancelledError || signal.aborted) {
       log("Build cancelled by stop/destroy request.");
@@ -525,7 +525,7 @@ export async function destroyPreview(previewId: string): Promise<void> {
 
   // Stop the runtime log stream and the Cloudflare tunnel first.
   stopLogStream(previewId);
-  stopTunnel(previewId);
+  await stopTunnel(previewId);
 
   // dockerデーモン無応答でジョブが固着しないようアイドルタイムアウトを設ける(issue #33)。
   const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
@@ -594,7 +594,7 @@ export async function stopPreview(previewId: string): Promise<void> {
 
   // 実行時ログストリームとトンネルを止める(コンテナ・ボリューム・workspaceは残す)。
   stopLogStream(previewId);
-  stopTunnel(previewId);
+  await stopTunnel(previewId);
 
   const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
   try {
@@ -685,7 +685,7 @@ export async function restartPreview(previewId: string): Promise<void> {
 
     // トンネルは流用。生きていなければ(サーバー再起動後など)張り直す。
     let url = preview.url ?? `http://${env.PREVIEW_HOST}:${preview.hostPort ?? 0}`;
-    if (env.PREVIEW_TUNNEL && preview.hostPort && !isTunnelAlive(previewId)) {
+    if (env.PREVIEW_TUNNEL && preview.hostPort && !(await isTunnelAlive(previewId))) {
       try {
         log("Tunnel is not active; starting a new Cloudflare Quick Tunnel...");
         url = await startTunnel(previewId, preview.hostPort);
@@ -716,11 +716,11 @@ export async function restartPreview(previewId: string): Promise<void> {
 }
 
 /**
- * Re-establish the Cloudflare tunnel (and runtime log stream) for a single
- * "running" preview after a server restart. The Docker containers survive a
- * server restart, but the cloudflared child process and the in-memory tunnel
- * map do not, leaving the preview with a dead trycloudflare URL. This restores
- * the tunnel and updates the URL without restarting the containers.
+ * Re-establish the runtime log stream and reattach the Cloudflare tunnel for a
+ * single "running" preview after a server restart. Both the preview containers
+ * and the tunnel container (issue #48) survive a restart, so this normally just
+ * reads back the still-valid tunnel URL and restarts the log stream (which does
+ * not survive). Only if the tunnel container is gone does it start a new one.
  */
 export async function reattachPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
@@ -731,17 +731,30 @@ export async function reattachPreview(previewId: string): Promise<void> {
   const { repo, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
-  // トンネルが切れている(再起動後は必ず切れている)場合のみ張り直す。
-  if (env.PREVIEW_TUNNEL && !isTunnelAlive(previewId)) {
-    try {
-      log("Re-establishing Cloudflare tunnel after server restart...");
-      const url = await startTunnel(previewId, preview.hostPort);
-      await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
-      log(`Tunnel ready: ${url}`);
-      // 開いているパネルにURL更新を促す(statusは running のまま)。
-      emitPreviewStatus(previewId, "running");
-    } catch (e) {
-      log(`WARN: failed to re-establish tunnel: ${e instanceof Error ? e.message : String(e)}`);
+  // トンネルはコンテナ化されアプリ再起動を跨いで生存する(issue #48)。生きていれば
+  // 現在のURLを読み直してDBを同期し(=URL維持)、コンテナが無い場合のみ張り直す。
+  if (env.PREVIEW_TUNNEL) {
+    if (await isTunnelAlive(previewId)) {
+      const url = await getTunnelUrl(previewId);
+      if (url && url !== preview.url) {
+        // コンテナ再起動などでURLが変わっていた場合のみDBを更新して通知する。
+        await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
+        log(`Reattached to existing tunnel: ${url}`);
+        emitPreviewStatus(previewId, "running");
+      } else {
+        log(`Existing tunnel is still alive: ${url ?? preview.url}`);
+      }
+    } else {
+      try {
+        log("Tunnel container is gone; starting a new Cloudflare Quick Tunnel...");
+        const url = await startTunnel(previewId, preview.hostPort);
+        await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
+        log(`Tunnel ready: ${url}`);
+        // 開いているパネルにURL更新を促す(statusは running のまま)。
+        emitPreviewStatus(previewId, "running");
+      } catch (e) {
+        log(`WARN: failed to re-establish tunnel: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }
 
@@ -758,9 +771,9 @@ export async function reattachPreview(previewId: string): Promise<void> {
 }
 
 /**
- * On startup, re-establish tunnels/log streams for every preview still marked
- * "running" (their containers survived the restart but the tunnel did not).
- * Best-effort and sequential to avoid spawning many cloudflared at once.
+ * On startup, reattach tunnels/log streams for every preview still marked
+ * "running" (their containers and tunnel containers survived the restart).
+ * Best-effort and sequential to avoid a burst of docker calls at once.
  */
 export async function reattachRunningPreviews(): Promise<void> {
   const running = await prisma.previewEnvironment.findMany({
