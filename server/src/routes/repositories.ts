@@ -400,13 +400,14 @@ repositoriesRoutes.post("/:owner/:name/pulls/:number/preview/restart", async (c)
 
 // --- Branch-based previews (issue #25) ---
 
-/** List branches available on GitHub for this repository. */
+/** List branches available on GitHub for this repository(5分キャッシュ。?refresh=1で更新)。 */
 repositoriesRoutes.get("/:owner/:name/branches", async (c) => {
   const { owner, name } = c.req.param();
   const repository = await findRepo(owner, name);
   if (!repository) return c.json({ error: "Repository not found" }, 404);
+  const refresh = c.req.query("refresh") === "1";
   try {
-    const branches = await listRepositoryBranches(owner, name);
+    const branches = await listRepositoryBranches(owner, name, refresh);
     return c.json({ branches });
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : "ブランチの取得に失敗しました" }, 502);

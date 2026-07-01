@@ -128,9 +128,9 @@ export const api = {
 
   // --- Branch-based previews (issue #25) ---
 
-  getBranches: (owner: string, name: string) =>
+  getBranches: (owner: string, name: string, refresh = false) =>
     request<{ branches: import("../types").BranchInfo[] }>(
-      `/repositories/${owner}/${name}/branches`,
+      `/repositories/${owner}/${name}/branches${refresh ? "?refresh=1" : ""}`,
     ),
 
   getBranchPreviews: (owner: string, name: string) =>
