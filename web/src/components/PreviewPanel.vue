@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
+  Database,
   Eraser,
   ExternalLink,
+  Link,
   Loader2,
   Pause,
   Play,
@@ -11,6 +13,7 @@ import {
   Square,
 } from "lucide-vue-next";
 
+import type { StartPreviewOptions } from "../api/client";
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
@@ -22,7 +25,7 @@ import BaseCard from "./ui/BaseCard.vue";
  * or a branch (issue #25). The parent supplies the concrete API calls.
  */
 export interface PreviewActions {
-  start: (noCache: boolean) => Promise<{ previewId: string }>;
+  start: (opts?: StartPreviewOptions) => Promise<{ previewId: string }>;
   restart: () => Promise<{ previewId: string }>;
   destroy: () => Promise<void>;
   /** Stop containers without removing them (issue #32). */
@@ -100,13 +103,13 @@ async function refresh() {
   }
 }
 
-// noCache=true でビルドキャッシュを破棄して再ビルドする(issue #20)。
-async function start(noCache = false) {
+// ビルドオプション: noCache(#20) / resetVolumes(#41) / keepTunnel(#42)。
+async function start(opts: StartPreviewOptions = {}) {
   busy.value = true;
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await props.actions.start(noCache);
+    const res = await props.actions.start(opts);
     previewId.value = res.previewId;
     status.value = "pending";
     connect(res.previewId);
@@ -223,10 +226,34 @@ onUnmounted(disconnect);
             variant="secondary"
             :disabled="busy"
             title="ビルドキャッシュを破棄して再ビルドします"
-            @click="start(true)"
+            @click="start({ noCache: true })"
           >
             <Eraser class="h-4 w-4" />
             キャッシュ破棄して再ビルド
+          </BaseButton>
+          <!-- トンネル(URL)を維持したまま再ビルド(issue #42) -->
+          <BaseButton
+            v-if="status === 'running'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            title="トンネル(URL)を維持したまま再ビルドします(DB再生成不要)"
+            @click="start({ keepTunnel: true })"
+          >
+            <Link class="h-4 w-4" />
+            トンネル維持で再ビルド
+          </BaseButton>
+          <!-- ボリュームを破棄して初期化再ビルド(issue #41) -->
+          <BaseButton
+            v-if="status === 'running'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            title="ボリューム(DB等)を破棄して初期化してから再ビルドします"
+            @click="start({ resetVolumes: true })"
+          >
+            <Database class="h-4 w-4" />
+            ボリューム破棄して再ビルド
           </BaseButton>
           <!-- 破棄せず停止(後で再開可能。issue #32) -->
           <BaseButton

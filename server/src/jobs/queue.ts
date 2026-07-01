@@ -7,6 +7,10 @@ export interface JobPayload {
   previewId: string;
   /** When true, rebuild Docker images without using the build cache (issue #20). */
   noCache?: boolean;
+  /** When true, destroy volumes before building for a fresh DB (issue #41). */
+  resetVolumes?: boolean;
+  /** When true, keep the existing tunnel/URL instead of creating a new one (issue #42). */
+  keepTunnel?: boolean;
 }
 
 /** Enqueue a background job for the worker to process. */

@@ -35,7 +35,11 @@ async function processJob(job: QueuedJob): Promise<void> {
   try {
     const payload = JSON.parse(job.payload) as JobPayload;
     if (job.type === "build") {
-      await buildPreview(payload.previewId, payload.noCache);
+      await buildPreview(payload.previewId, {
+        noCache: payload.noCache,
+        resetVolumes: payload.resetVolumes,
+        keepTunnel: payload.keepTunnel,
+      });
     } else if (job.type === "destroy") {
       await destroyPreview(payload.previewId);
     } else if (job.type === "restart") {

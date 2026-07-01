@@ -22,7 +22,7 @@ const number = Number(route.params.number);
 
 // PRプレビューの操作を PreviewPanel に渡す(issue #25でパネルを汎用化)。
 const previewActions: PreviewActions = {
-  start: (noCache) => api.startPreview(owner, name, number, noCache),
+  start: (opts) => api.startPreview(owner, name, number, opts),
   restart: () => api.restartPreview(owner, name, number),
   destroy: () => api.destroyPreview(owner, name, number).then(() => undefined),
   stop: () => api.stopPreview(owner, name, number),

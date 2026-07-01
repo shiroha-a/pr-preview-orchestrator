@@ -65,8 +65,7 @@ async function startBranch() {
 // PreviewPanel に渡すブランチ用の操作(previewId基点)。
 function branchActions(preview: PreviewDTO): PreviewActions {
   return {
-    start: (noCache) =>
-      api.startBranchPreview(props.owner, props.name, preview.branchRef ?? "", noCache),
+    start: (opts) => api.startBranchPreview(props.owner, props.name, preview.branchRef ?? "", opts),
     restart: () => api.restartPreviewById(preview.id),
     destroy: () => api.destroyPreviewById(preview.id).then(() => undefined),
     stop: () => api.stopPreviewById(preview.id),
