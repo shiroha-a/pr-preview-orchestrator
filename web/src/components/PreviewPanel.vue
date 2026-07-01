@@ -40,10 +40,12 @@ const actionError = ref<string | null>(null);
 const busy = ref(false);
 
 // 再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約)。
-const rebuildOpts = ref<StartPreviewOptions>({
+// 全て「チェック=破棄/再作成」の極性に統一する(issue #50)。resetTunnel は
+// keepTunnel の反転で、既定(未チェック)ではトンネル(URL)を維持する。
+const rebuildOpts = ref({
   noCache: false,
-  keepTunnel: false,
   resetVolumes: false,
+  resetTunnel: false,
 });
 
 const ACTIVE = ["pending", "cloning", "building", "stopping"];
@@ -116,9 +118,14 @@ async function start(opts: StartPreviewOptions = {}) {
   }
 }
 
-// チェックボックスで選んだオプションを付けて再ビルドする。
+// チェックボックスで選んだオプションを付けて再ビルドする。トンネルは既定で維持し、
+// 「トンネル破棄」チェック時のみ再作成する(URLが変わる)。issue #50。
 function rebuild() {
-  void start({ ...rebuildOpts.value });
+  void start({
+    noCache: rebuildOpts.value.noCache,
+    resetVolumes: rebuildOpts.value.resetVolumes,
+    keepTunnel: !rebuildOpts.value.resetTunnel,
+  });
 }
 
 async function destroy() {
@@ -220,17 +227,6 @@ onUnmounted(disconnect);
             </label>
             <label
               class="inline-flex items-center gap-1"
-              title="トンネル(URL)を維持したまま再ビルド(DB再生成不要)"
-            >
-              <input
-                v-model="rebuildOpts.keepTunnel"
-                type="checkbox"
-                class="h-3.5 w-3.5 accent-blue-600"
-              />
-              トンネル維持
-            </label>
-            <label
-              class="inline-flex items-center gap-1"
               title="ボリューム(DB等)を破棄して初期化してから再ビルド"
             >
               <input
@@ -239,6 +235,17 @@ onUnmounted(disconnect);
                 class="h-3.5 w-3.5 accent-blue-600"
               />
               ボリューム破棄
+            </label>
+            <label
+              class="inline-flex items-center gap-1"
+              title="トンネル(URL)を破棄して再作成する(URLが変わる)。未チェックなら維持"
+            >
+              <input
+                v-model="rebuildOpts.resetTunnel"
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-blue-600"
+              />
+              トンネル破棄
             </label>
           </div>
 
