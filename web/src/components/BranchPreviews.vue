@@ -13,21 +13,20 @@ const props = defineProps<{ owner: string; name: string }>();
 
 const branches = ref<BranchInfo[]>([]);
 const branchesLoading = ref(false);
-const branchesLoaded = ref(false);
 const selectedBranch = ref("");
 const starting = ref(false);
 const startError = ref<string | null>(null);
 
 const previews = ref<PreviewDTO[]>([]);
 
-// ブランチ一覧はGitHub APIを叩くため、ボタン押下時に遅延ロードする。
-async function loadBranches() {
+// ブランチ一覧はサーバー側で5分キャッシュされる。マウント時に自動取得し、
+// 「更新」ボタン(force=true)で最新化する。
+async function loadBranches(force = false) {
   branchesLoading.value = true;
   startError.value = null;
   try {
-    const res = await api.getBranches(props.owner, props.name);
+    const res = await api.getBranches(props.owner, props.name, force);
     branches.value = res.branches;
-    branchesLoaded.value = true;
     if (!selectedBranch.value && branches.value.length > 0) {
       selectedBranch.value = branches.value[0].name;
     }
@@ -73,7 +72,10 @@ function branchActions(preview: PreviewDTO): PreviewActions {
   };
 }
 
-onMounted(loadPreviews);
+onMounted(() => {
+  void loadPreviews();
+  void loadBranches();
+});
 </script>
 
 <template>
@@ -84,28 +86,26 @@ onMounted(loadPreviews);
         <div class="flex flex-wrap items-center gap-2">
           <GitBranch class="h-4 w-4 shrink-0 text-gray-500" />
           <select
-            v-if="branchesLoaded"
             v-model="selectedBranch"
-            class="min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900"
+            :disabled="branchesLoading || branches.length === 0"
+            class="min-w-0 flex-1 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-60 dark:border-gray-700 dark:bg-gray-900"
           >
+            <option v-if="branches.length === 0" value="">
+              {{ branchesLoading ? "取得中..." : "ブランチがありません" }}
+            </option>
             <option v-for="b in branches" :key="b.name" :value="b.name">{{ b.name }}</option>
           </select>
           <BaseButton
-            v-else
             size="sm"
             variant="secondary"
             :disabled="branchesLoading"
-            @click="loadBranches"
+            title="ブランチ一覧を更新(GitHubから再取得)"
+            @click="loadBranches(true)"
           >
             <RefreshCw :class="['h-4 w-4', branchesLoading && 'animate-spin']" />
-            {{ branchesLoading ? "取得中..." : "ブランチを取得" }}
+            <span class="hidden sm:inline">更新</span>
           </BaseButton>
-          <BaseButton
-            v-if="branchesLoaded"
-            size="sm"
-            :disabled="starting || !selectedBranch"
-            @click="startBranch"
-          >
+          <BaseButton size="sm" :disabled="starting || !selectedBranch" @click="startBranch">
             <Play class="h-4 w-4" />
             {{ starting ? "起動中..." : "起動" }}
           </BaseButton>

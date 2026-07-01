@@ -123,6 +123,8 @@ const filteredPulls = computed(() =>
       </div>
     </div>
 
+    <BranchPreviews :owner="owner" :name="name" />
+
     <p v-if="loading" class="text-sm text-gray-500">読み込み中...</p>
     <p v-else-if="error" class="text-sm text-red-600">{{ error }}</p>
 
@@ -211,7 +213,5 @@ const filteredPulls = computed(() =>
         </ul>
       </template>
     </template>
-
-    <BranchPreviews :owner="owner" :name="name" />
   </div>
 </template>
