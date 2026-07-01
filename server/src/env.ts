@@ -44,6 +44,10 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v !== "false"),
 
+  // Docker image used to run each preview's Cloudflare tunnel as a detached
+  // container, so the tunnel survives an app restart (issue #48).
+  PREVIEW_TUNNEL_IMAGE: z.string().default("cloudflare/cloudflared:latest"),
+
   // Idle timeout (ms) for build commands: abort only after this long with no
   // output. Large builds keep running as long as they keep producing output.
   PREVIEW_BUILD_TIMEOUT_MS: z.coerce.number().int().default(600000),
