@@ -99,12 +99,19 @@ export interface CommentDTO {
   line: number | null;
 }
 
-// プレビュー(composeプロジェクト)単位に集計したリソース使用量。
+// 個別コンテナ(サービス)の使用量。
+export interface ContainerUsage {
+  name: string;
+  cpu: number;
+  memBytes: number;
+}
+
+// プレビュー(composeプロジェクト)単位に集計したリソース使用量 + 内訳。
 export interface PreviewUsage {
   label: string;
   cpu: number; // 合計CPU使用率(%)
   memBytes: number; // 合計使用メモリ(バイト)
-  containers: number; // コンテナ数
+  containers: ContainerUsage[]; // 個別コンテナの内訳
 }
 
 export interface SystemMetrics {

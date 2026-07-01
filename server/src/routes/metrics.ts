@@ -91,17 +91,25 @@ function dockerStats(): Promise<RawContainerStat[]> {
   });
 }
 
-/** Per-preview aggregated resource usage(プレビュー単位のCPU/メモリ合計)。 */
+/** 個別コンテナの使用量(サービス名は project 接頭辞を除いたもの)。 */
+interface ContainerUsage {
+  name: string;
+  cpu: number;
+  memBytes: number;
+}
+
+/** Per-preview aggregated resource usage(プレビュー単位のCPU/メモリ合計 + 内訳)。 */
 interface PreviewUsage {
   label: string;
   cpu: number;
   memBytes: number;
-  containers: number;
+  containers: ContainerUsage[];
 }
 
 /**
  * Aggregate docker stats per preview (compose project). Each preview's
  * containers (app/db/redis 等)を合算し、システム最大メモリの繰り返し表示をやめる。
+ * 個別コンテナの内訳も containers に含める(UIで2重折りたたみ表示するため)。
  */
 async function previewUsage(): Promise<PreviewUsage[]> {
   const raw = await dockerStats();
@@ -123,11 +131,20 @@ async function previewUsage(): Promise<PreviewUsage[]> {
     if (p.pullRequest && repo) label = `${repo.owner}/${repo.name} #${p.pullRequest.number}`;
     else if (repo && p.branchRef) label = `${repo.owner}/${repo.name} @${p.branchRef}`;
 
+    const containers: ContainerUsage[] = mine
+      .map((s) => ({
+        // project 接頭辞を除いてサービス名+index だけを表示する(例: "web-1")。
+        name: s.name.slice(proj.length + 1) || s.name,
+        cpu: s.cpu,
+        memBytes: s.memBytes,
+      }))
+      .sort((a, b) => b.memBytes - a.memBytes);
+
     result.push({
       label,
       cpu: mine.reduce((a, s) => a + s.cpu, 0),
       memBytes: mine.reduce((a, s) => a + s.memBytes, 0),
-      containers: mine.length,
+      containers,
     });
   }
   result.sort((a, b) => b.memBytes - a.memBytes);
