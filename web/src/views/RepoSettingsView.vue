@@ -4,9 +4,12 @@ import { useRoute, useRouter } from "vue-router";
 import { Download, Plus, Trash2, Upload } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { OverlayFile, RewriteRule } from "../types";
+import type { ProfileInput } from "../api/client";
+import type { OverlayFile, RewriteRule, SettingsProfileDTO } from "../types";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
+import OverlayFilesEditor from "../components/OverlayFilesEditor.vue";
+import RewriteRulesEditor from "../components/RewriteRulesEditor.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -26,9 +29,33 @@ const resetVolumes = ref(false);
 const rules = ref<RewriteRule[]>([]);
 const overlays = ref<OverlayFile[]>([]);
 
-// {{ }} は Vue の補間と衝突するため定数経由でプレースホルダ/ヒントを表示する。
-const patternPlaceholder = "^url:.*";
-const replacementPlaceholder = "url: {{PREVIEW_URL}}";
+/**
+ * Editable form state for one settings profile. Each `overrides.*` flag maps to
+ * a nullable API field: unchecked = null = inherit the repository default
+ * (issue #52).
+ */
+interface ProfileForm {
+  id: string | null;
+  name: string;
+  overrides: {
+    composePath: boolean;
+    webService: boolean;
+    internalPort: boolean;
+    fileRewrites: boolean;
+    overlayFiles: boolean;
+    resetVolumes: boolean;
+  };
+  composePath: string;
+  webService: string;
+  internalPort: string;
+  resetVolumes: boolean;
+  rules: RewriteRule[];
+  overlays: OverlayFile[];
+}
+
+const profiles = ref<ProfileForm[]>([]);
+
+// {{ }} は Vue の補間と衝突するため定数経由でヒントを表示する。
 const varsHint = "{{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}}";
 
 function parseJsonArray<T>(value: string | null): T[] {
@@ -38,6 +65,34 @@ function parseJsonArray<T>(value: string | null): T[] {
   } catch {
     return [];
   }
+}
+
+function profileFormFromDTO(dto: SettingsProfileDTO): ProfileForm {
+  return {
+    id: dto.id,
+    name: dto.name,
+    overrides: {
+      composePath: dto.composePath != null,
+      webService: dto.webService != null,
+      internalPort: dto.internalPort != null,
+      fileRewrites: dto.fileRewrites != null,
+      overlayFiles: dto.overlayFiles != null,
+      resetVolumes: dto.resetVolumes != null,
+    },
+    // 未上書きの項目は現在の既定値を初期表示し、チェック時にそこから編集できるようにする。
+    composePath: dto.composePath ?? composePath.value,
+    webService: dto.webService ?? webService.value,
+    internalPort: dto.internalPort != null ? String(dto.internalPort) : internalPort.value,
+    resetVolumes: dto.resetVolumes ?? resetVolumes.value,
+    rules:
+      dto.fileRewrites != null
+        ? parseJsonArray<RewriteRule>(dto.fileRewrites)
+        : rules.value.map((r) => ({ ...r })),
+    overlays:
+      dto.overlayFiles != null
+        ? parseJsonArray<OverlayFile>(dto.overlayFiles)
+        : overlays.value.map((o) => ({ ...o })),
+  };
 }
 
 async function load() {
@@ -51,6 +106,7 @@ async function load() {
     resetVolumes.value = repository.resetVolumes;
     rules.value = parseJsonArray<RewriteRule>(repository.fileRewrites);
     overlays.value = parseJsonArray<OverlayFile>(repository.overlayFiles);
+    profiles.value = (repository.profiles ?? []).map(profileFormFromDTO);
   } catch (e) {
     error.value = e instanceof Error ? e.message : "読み込みに失敗しました";
   } finally {
@@ -60,17 +116,43 @@ async function load() {
 
 onMounted(load);
 
-function addRule() {
-  rules.value.push({ file: "", pattern: "", replacement: "" });
+function addProfile() {
+  profiles.value.push({
+    id: null,
+    name: "",
+    overrides: {
+      composePath: false,
+      webService: false,
+      internalPort: false,
+      fileRewrites: false,
+      overlayFiles: false,
+      resetVolumes: false,
+    },
+    composePath: composePath.value,
+    webService: webService.value,
+    internalPort: internalPort.value,
+    resetVolumes: resetVolumes.value,
+    rules: rules.value.map((r) => ({ ...r })),
+    overlays: overlays.value.map((o) => ({ ...o })),
+  });
 }
-function removeRule(index: number) {
-  rules.value.splice(index, 1);
+function removeProfile(index: number) {
+  profiles.value.splice(index, 1);
 }
-function addOverlay() {
-  overlays.value.push({ path: "", content: "" });
-}
-function removeOverlay(index: number) {
-  overlays.value.splice(index, 1);
+
+function toProfileInput(p: ProfileForm): ProfileInput {
+  return {
+    ...(p.id ? { id: p.id } : {}),
+    name: p.name.trim(),
+    composePath: p.overrides.composePath ? p.composePath.trim() || "docker-compose.yml" : null,
+    webService: p.overrides.webService ? p.webService.trim() || null : null,
+    internalPort: p.overrides.internalPort && p.internalPort ? Number(p.internalPort) : null,
+    fileRewrites: p.overrides.fileRewrites
+      ? p.rules.filter((r) => r.file.trim() && r.pattern.trim())
+      : null,
+    overlayFiles: p.overrides.overlayFiles ? p.overlays.filter((o) => o.path.trim()) : null,
+    resetVolumes: p.overrides.resetVolumes ? p.resetVolumes : null,
+  };
 }
 
 function currentSettings() {
@@ -81,6 +163,7 @@ function currentSettings() {
     fileRewrites: rules.value.filter((r) => r.file.trim() && r.pattern.trim()),
     overlayFiles: overlays.value.filter((o) => o.path.trim()),
     resetVolumes: resetVolumes.value,
+    profiles: profiles.value.filter((p) => p.name.trim()).map(toProfileInput),
   };
 }
 
@@ -89,7 +172,9 @@ async function save() {
   error.value = null;
   saved.value = false;
   try {
-    await api.updateRepoSettings(owner, name, currentSettings());
+    const { repository } = await api.updateRepoSettings(owner, name, currentSettings());
+    // 新規プロファイルに採番されたidを反映する(再保存時の重複作成を防ぐ)。
+    profiles.value = (repository.profiles ?? []).map(profileFormFromDTO);
     saved.value = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "保存に失敗しました";
@@ -100,7 +185,13 @@ async function save() {
 
 // --- 設定のエクスポート / インポート(issue #13) ---
 function exportSettings() {
-  const blob = new Blob([JSON.stringify(currentSettings(), null, 2)], {
+  // idはこのDB固有のため、他環境へ持ち出すエクスポートには含めない。
+  const settings = currentSettings();
+  const exported = {
+    ...settings,
+    profiles: settings.profiles.map(({ id: _id, ...rest }) => rest),
+  };
+  const blob = new Blob([JSON.stringify(exported, null, 2)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
@@ -125,6 +216,25 @@ function importSettings(event: Event) {
       resetVolumes.value = Boolean(data.resetVolumes);
       rules.value = Array.isArray(data.fileRewrites) ? (data.fileRewrites as RewriteRule[]) : [];
       overlays.value = Array.isArray(data.overlayFiles) ? (data.overlayFiles as OverlayFile[]) : [];
+      profiles.value = Array.isArray(data.profiles)
+        ? (data.profiles as ProfileInput[]).map((p) =>
+            profileFormFromDTO({
+              id: "",
+              repositoryId: "",
+              name: typeof p.name === "string" ? p.name : "",
+              composePath: p.composePath ?? null,
+              webService: p.webService ?? null,
+              internalPort: p.internalPort ?? null,
+              fileRewrites: p.fileRewrites != null ? JSON.stringify(p.fileRewrites) : null,
+              overlayFiles: p.overlayFiles != null ? JSON.stringify(p.overlayFiles) : null,
+              resetVolumes: p.resetVolumes ?? null,
+              createdAt: "",
+              updatedAt: "",
+            }),
+          )
+        : [];
+      // インポートしたプロファイルは新規作成として保存する。
+      for (const p of profiles.value) p.id = null;
       saved.value = false;
       error.value = null;
     } catch {
@@ -179,7 +289,16 @@ const textareaClass =
       <form class="space-y-5 p-4" @submit.prevent="save">
         <div>
           <label class="mb-1 block text-sm font-medium">Composeファイルのパス</label>
-          <input v-model="composePath" :class="inputClass" placeholder="docker-compose.yml" />
+          <textarea
+            v-model="composePath"
+            :class="textareaClass"
+            rows="2"
+            placeholder="docker-compose.yml"
+          ></textarea>
+          <p class="mt-1 text-xs text-gray-500">
+            1行に1ファイル。複数指定すると<code>docker compose -f</code
+            >に連結され、後のファイルが前の定義を上書きします。
+          </p>
         </div>
 
         <div>
@@ -202,83 +321,134 @@ const textareaClass =
         </div>
 
         <div>
-          <div class="mb-1 flex items-center justify-between">
-            <label class="text-sm font-medium">ファイル書き換えルール</label>
-            <BaseButton type="button" variant="secondary" size="sm" @click="addRule">
-              <Plus class="h-4 w-4" />
-              ルールを追加
-            </BaseButton>
-          </div>
+          <label class="mb-1 block text-sm font-medium">ファイル書き換えルール</label>
           <p class="mb-2 text-xs text-gray-500">
             clone後・起動前に既存ファイルを正規表現で書き換えます。置換文字列で
             <code>{{ varsHint }}</code> が使えます。
           </p>
-          <p v-if="rules.length === 0" class="text-xs text-gray-400">ルールはありません。</p>
-          <div
-            v-for="(rule, i) in rules"
-            :key="i"
-            class="mb-2 space-y-2 rounded-md border border-gray-200 p-2 dark:border-gray-700"
-          >
-            <div class="flex items-center gap-2">
-              <input
-                v-model="rule.file"
-                :class="inputClass"
-                placeholder=".config/default.yml(対象ファイル)"
-              />
-              <BaseButton type="button" variant="ghost" size="sm" @click="removeRule(i)">
-                <Trash2 class="h-4 w-4" />
-              </BaseButton>
-            </div>
-            <input v-model="rule.pattern" :class="inputClass" :placeholder="patternPlaceholder" />
-            <input
-              v-model="rule.replacement"
-              :class="inputClass"
-              :placeholder="replacementPlaceholder"
-            />
-          </div>
+          <RewriteRulesEditor v-model="rules" />
         </div>
 
         <div>
-          <div class="mb-1 flex items-center justify-between">
-            <label class="text-sm font-medium">オーバーレイファイル</label>
-            <BaseButton type="button" variant="secondary" size="sm" @click="addOverlay">
-              <Plus class="h-4 w-4" />
-              ファイルを追加
-            </BaseButton>
-          </div>
+          <label class="mb-1 block text-sm font-medium">オーバーレイファイル</label>
           <p class="mb-2 text-xs text-gray-500">
             対象リポジトリ外で用意したファイル(テスト用 compose / 設定 / volumes 等)を clone
             先に配置します。内容で <code>{{ varsHint }}</code> が使えます。
           </p>
-          <p v-if="overlays.length === 0" class="text-xs text-gray-400">ファイルはありません。</p>
-          <div
-            v-for="(o, i) in overlays"
-            :key="i"
-            class="mb-2 space-y-2 rounded-md border border-gray-200 p-2 dark:border-gray-700"
-          >
-            <div class="flex items-center gap-2">
-              <input
-                v-model="o.path"
-                :class="inputClass"
-                placeholder="docker-compose.preview.yml(配置先パス)"
-              />
-              <BaseButton type="button" variant="ghost" size="sm" @click="removeOverlay(i)">
-                <Trash2 class="h-4 w-4" />
-              </BaseButton>
-            </div>
-            <textarea
-              v-model="o.content"
-              :class="textareaClass"
-              rows="6"
-              placeholder="ファイルの内容..."
-            ></textarea>
-          </div>
+          <OverlayFilesEditor v-model="overlays" />
         </div>
 
         <label class="flex items-start gap-2 text-sm">
           <input v-model="resetVolumes" type="checkbox" class="mt-0.5 h-4 w-4" />
           <span> 起動のたびにDockerボリュームを初期化する(DB・ファイル等をリセット) </span>
         </label>
+
+        <!-- 設定プロファイル(issue #52): チェックした項目だけ既定を上書きする -->
+        <div class="border-t border-gray-100 pt-4 dark:border-gray-800">
+          <div class="mb-1 flex items-center justify-between">
+            <label class="text-sm font-medium">プロファイル</label>
+            <BaseButton type="button" variant="secondary" size="sm" @click="addProfile">
+              <Plus class="h-4 w-4" />
+              プロファイルを追加
+            </BaseButton>
+          </div>
+          <p class="mb-2 text-xs text-gray-500">
+            既定の設定を項目単位で上書きする名前付きプロファイルです。プレビューの起動/再ビルド時に選択できます。チェックしていない項目は既定の設定を使います。
+          </p>
+          <p v-if="profiles.length === 0" class="text-xs text-gray-400">
+            プロファイルはありません。
+          </p>
+          <div
+            v-for="(p, i) in profiles"
+            :key="p.id ?? `new-${i}`"
+            class="mb-3 space-y-3 rounded-md border border-gray-200 p-3 dark:border-gray-700"
+          >
+            <div class="flex items-center gap-2">
+              <input
+                v-model="p.name"
+                :class="inputClass"
+                placeholder="プロファイル名(例: 検索あり)"
+              />
+              <BaseButton type="button" variant="ghost" size="sm" @click="removeProfile(i)">
+                <Trash2 class="h-4 w-4" />
+              </BaseButton>
+            </div>
+
+            <div class="space-y-3 text-sm">
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.composePath" type="checkbox" class="h-4 w-4" />
+                  Composeファイルのパスを上書き
+                </label>
+                <textarea
+                  v-if="p.overrides.composePath"
+                  v-model="p.composePath"
+                  :class="[textareaClass, 'mt-2']"
+                  rows="2"
+                  placeholder="docker-compose.yml&#10;docker-compose.search.yml"
+                ></textarea>
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.webService" type="checkbox" class="h-4 w-4" />
+                  公開Webサービス名を上書き
+                </label>
+                <input
+                  v-if="p.overrides.webService"
+                  v-model="p.webService"
+                  :class="[inputClass, 'mt-2']"
+                  placeholder="web"
+                />
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.internalPort" type="checkbox" class="h-4 w-4" />
+                  内部ポートを上書き
+                </label>
+                <input
+                  v-if="p.overrides.internalPort"
+                  v-model="p.internalPort"
+                  :class="[inputClass, 'mt-2']"
+                  inputmode="numeric"
+                  placeholder="3000"
+                />
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.fileRewrites" type="checkbox" class="h-4 w-4" />
+                  ファイル書き換えルールを上書き
+                </label>
+                <div v-if="p.overrides.fileRewrites" class="mt-2">
+                  <RewriteRulesEditor v-model="p.rules" />
+                </div>
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.overlayFiles" type="checkbox" class="h-4 w-4" />
+                  オーバーレイファイルを上書き
+                </label>
+                <div v-if="p.overrides.overlayFiles" class="mt-2">
+                  <OverlayFilesEditor v-model="p.overlays" />
+                </div>
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.resetVolumes" type="checkbox" class="h-4 w-4" />
+                  ボリューム初期化を上書き
+                </label>
+                <label v-if="p.overrides.resetVolumes" class="mt-2 flex items-start gap-2">
+                  <input v-model="p.resetVolumes" type="checkbox" class="mt-0.5 h-4 w-4" />
+                  <span>起動のたびにDockerボリュームを初期化する</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="flex flex-wrap items-center justify-end gap-3">
           <label

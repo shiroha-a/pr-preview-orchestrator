@@ -12,6 +12,7 @@ import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
 import { applyOverlays, parseOverlayFiles } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
+import { composeFileArgs, type EffectiveSettings, resolveSettings } from "./settings";
 import { getTunnelUrl, isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
@@ -66,12 +67,18 @@ function branchWorkspaceSlug(owner: string, name: string, branch: string): strin
 
 /** A preview row with its target relations loaded (PR and/or repository). */
 type PreviewWithTarget = Prisma.PreviewEnvironmentGetPayload<{
-  include: { pullRequest: { include: { repository: true } }; repository: true };
+  include: {
+    pullRequest: { include: { repository: true } };
+    repository: true;
+    profile: true;
+  };
 }>;
 
 /** Resolved git/compose parameters needed to build a preview, for either kind. */
 interface BuildTarget {
   repo: Repository;
+  /** Repository defaults merged with the preview's settings profile (issue #52). */
+  settings: EffectiveSettings;
   owner: string;
   name: string;
   /** Ref to `git fetch origin` (e.g. `pull/12/head` or a branch name). */
@@ -94,6 +101,7 @@ function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
     }
     return {
       repo,
+      settings: resolveSettings(repo, preview.profile),
       owner: repo.owner,
       name: repo.name,
       fetchRef: branch,
@@ -109,6 +117,7 @@ function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
   const repo = pr.repository;
   return {
     repo,
+    settings: resolveSettings(repo, preview.profile),
     owner: repo.owner,
     name: repo.name,
     fetchRef: `pull/${pr.number}/head`,
@@ -123,7 +132,11 @@ function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
 function loadPreviewWithTarget(previewId: string): Promise<PreviewWithTarget | null> {
   return prisma.previewEnvironment.findUnique({
     where: { id: previewId },
-    include: { pullRequest: { include: { repository: true } }, repository: true },
+    include: {
+      pullRequest: { include: { repository: true } },
+      repository: true,
+      profile: true,
+    },
   });
 }
 
@@ -325,7 +338,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) throw new Error("Preview environment not found");
   const target = resolveBuildTarget(loaded);
-  const { repo, dir, composeProject: project } = target;
+  const { settings, dir, composeProject: project } = target;
 
   // 停止/破棄要求でビルドを中断できるようにする(issue #33)。controllerの登録は
   // try 内で行い、この後の更新が投げても finally で確実に解除されるようにする。
@@ -360,10 +373,14 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     activeBuilds.set(previewId, controller);
     // 設定チェックは preview 作成後・try 内で行う。preview 作成前に投げると
     // status が pending のまま残り「待機中」で固まってしまう(issue #8)。
-    if (!repo.webService || !repo.internalPort) {
+    // プロファイル適用後の実効設定に対して確認する(issue #52)。
+    if (!settings.webService || !settings.internalPort) {
       throw new Error(
         "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
       );
+    }
+    if (loaded.profile) {
+      log(`Using settings profile "${loaded.profile.name}"`);
     }
 
     await setStatus("cloning");
@@ -419,32 +436,36 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     // Write overlay files (e.g. a test-specific compose file or config from
     // outside the target repo) into the workspace. Content supports the same
     // template variables.
-    const overlays = parseOverlayFiles(repo.overlayFiles);
+    const overlays = parseOverlayFiles(settings.overlayFiles);
     if (overlays.length > 0) {
       log(`Writing ${overlays.length} overlay file(s)...`);
       applyOverlays(dir, overlays, templateVars, log);
     }
 
     // Apply file rewrite rules (e.g. inject the preview URL into a config file).
-    const rules = parseRewriteRules(repo.fileRewrites);
+    const rules = parseRewriteRules(settings.fileRewrites);
     if (rules.length > 0) {
       log(`Applying ${rules.length} file rewrite rule(s)...`);
       applyRewrites(dir, rules, templateVars, log);
     }
 
-    writeOverride({ dir, webService: repo.webService, hostPort, internalPort: repo.internalPort });
+    writeOverride({
+      dir,
+      webService: settings.webService,
+      hostPort,
+      internalPort: settings.internalPort,
+    });
 
     await setStatus("building", { hostPort, url });
 
     // リポジトリ設定またはオンデマンド要求(issue #41)でボリュームを破棄する。
-    if (repo.resetVolumes || resetVolumes) {
+    if (settings.resetVolumes || resetVolumes) {
       log("Resetting volumes (docker compose down -v)...");
       await runCommand(
         "docker",
         [
           "compose",
-          "-f",
-          repo.composePath,
+          ...composeFileArgs(settings.composePath),
           "-f",
           OVERRIDE_FILE,
           "-p",
@@ -457,7 +478,15 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       );
     }
 
-    const composeFiles = ["compose", "-f", repo.composePath, "-f", OVERRIDE_FILE, "-p", project];
+    // 複数composeファイルは後のファイルが前を上書きする(issue #52)。
+    const composeFiles = [
+      "compose",
+      ...composeFileArgs(settings.composePath),
+      "-f",
+      OVERRIDE_FILE,
+      "-p",
+      project,
+    ];
 
     // `docker compose up` には --no-cache がないため、キャッシュ破棄時は先に
     // `build --no-cache` でイメージを作り直してから up する(issue #20)。
@@ -488,7 +517,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     startLogStream({
       previewId,
       dir,
-      composePath: repo.composePath,
+      composePath: settings.composePath,
       overrideFile: OVERRIDE_FILE,
       project,
     });
@@ -514,7 +543,7 @@ export async function destroyPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) return;
   const preview = loaded;
-  const { repo, dir } = resolveBuildTarget(loaded);
+  const { settings, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
   emitPreviewStatus(previewId, "stopping");
@@ -535,8 +564,7 @@ export async function destroyPreview(previewId: string): Promise<void> {
         "docker",
         [
           "compose",
-          "-f",
-          repo.composePath,
+          ...composeFileArgs(settings.composePath),
           "-f",
           OVERRIDE_FILE,
           "-p",
@@ -583,7 +611,7 @@ export async function stopPreview(previewId: string): Promise<void> {
   // の順や二重投入での退行を防ぐ)。
   if (["stopped", "paused", "idle"].includes(preview.status)) return;
 
-  const { repo, dir } = resolveBuildTarget(loaded);
+  const { settings, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
   emitPreviewStatus(previewId, "stopping");
@@ -603,8 +631,7 @@ export async function stopPreview(previewId: string): Promise<void> {
         "docker",
         [
           "compose",
-          "-f",
-          repo.composePath,
+          ...composeFileArgs(settings.composePath),
           "-f",
           OVERRIDE_FILE,
           "-p",
@@ -645,7 +672,7 @@ export async function restartPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) throw new Error("Preview environment not found");
   const preview = loaded;
-  const { repo, dir } = resolveBuildTarget(loaded);
+  const { settings, dir } = resolveBuildTarget(loaded);
 
   const logBuffer: string[] = [];
   const log = (line: string) => {
@@ -671,8 +698,7 @@ export async function restartPreview(previewId: string): Promise<void> {
       "docker",
       [
         "compose",
-        "-f",
-        repo.composePath,
+        ...composeFileArgs(settings.composePath),
         "-f",
         OVERRIDE_FILE,
         "-p",
@@ -703,7 +729,7 @@ export async function restartPreview(previewId: string): Promise<void> {
     startLogStream({
       previewId,
       dir,
-      composePath: repo.composePath,
+      composePath: settings.composePath,
       overrideFile: OVERRIDE_FILE,
       project: preview.composeProject,
     });
@@ -728,7 +754,7 @@ export async function reattachPreview(previewId: string): Promise<void> {
   const preview = loaded;
   if (preview.status !== "running" || preview.hostPort == null) return;
 
-  const { repo, dir } = resolveBuildTarget(loaded);
+  const { settings, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
   // トンネルはコンテナ化されアプリ再起動を跨いで生存する(issue #48)。生きていれば
@@ -763,7 +789,7 @@ export async function reattachPreview(previewId: string): Promise<void> {
     startLogStream({
       previewId,
       dir,
-      composePath: repo.composePath,
+      composePath: settings.composePath,
       overrideFile: OVERRIDE_FILE,
       project: preview.composeProject,
     });

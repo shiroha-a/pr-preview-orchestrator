@@ -17,11 +17,28 @@ export interface PrLabel {
   color: string;
 }
 
+// 既定設定を項目単位で上書きするプロファイル(null=既定を継承。issue #52)。
+export interface SettingsProfileDTO {
+  id: string;
+  repositoryId: string;
+  name: string;
+  // Newline-separated compose file paths; later files override earlier ones.
+  composePath: string | null;
+  webService: string | null;
+  internalPort: number | null;
+  fileRewrites: string | null;
+  overlayFiles: string | null;
+  resetVolumes: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface RepositoryDTO {
   id: string;
   owner: string;
   name: string;
   installationId?: number | null;
+  // Newline-separated compose file paths (issue #52).
   composePath: string;
   webService: string | null;
   internalPort: number | null;
@@ -31,6 +48,8 @@ export interface RepositoryDTO {
   createdAt: string;
   updatedAt: string;
   _count?: { pullRequests: number };
+  // Included by GET /repositories/:owner/:name (issue #52).
+  profiles?: SettingsProfileDTO[];
 }
 
 export interface PreviewDTO {
@@ -46,6 +65,8 @@ export interface PreviewDTO {
   hostPort: number | null;
   commitSha: string | null;
   logs: string;
+  // 使用中の設定プロファイル(null=既定の設定。issue #52)。
+  profileId: string | null;
   createdAt: string;
   updatedAt: string;
 }

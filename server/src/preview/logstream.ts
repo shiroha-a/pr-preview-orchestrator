@@ -1,12 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 
 import { emitPreviewLog } from "./events";
+import { composeFileArgs } from "./settings";
 
 const streams = new Map<string, ChildProcess>();
 
 interface LogStreamOptions {
   previewId: string;
   dir: string;
+  /** Newline-separated compose file paths (issue #52). */
   composePath: string;
   overrideFile: string;
   project: string;
@@ -24,8 +26,7 @@ export function startLogStream(opts: LogStreamOptions): void {
     "docker",
     [
       "compose",
-      "-f",
-      opts.composePath,
+      ...composeFileArgs(opts.composePath),
       "-f",
       opts.overrideFile,
       "-p",

@@ -39,7 +39,14 @@ export function setupTestDb(): void {
 }
 
 export async function truncateAll(prisma: PrismaClient): Promise<void> {
-  const tables = ["User", "PreviewEnvironment", "PullRequest", "Repository", "Job"];
+  const tables = [
+    "User",
+    "PreviewEnvironment",
+    "PullRequest",
+    "SettingsProfile",
+    "Repository",
+    "Job",
+  ];
   for (const table of tables) {
     await prisma.$executeRawUnsafe(`DELETE FROM "${table}";`);
   }

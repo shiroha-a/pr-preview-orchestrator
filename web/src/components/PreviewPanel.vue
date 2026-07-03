@@ -27,6 +27,8 @@ const props = defineProps<{
   actions: PreviewActions;
   prHeadSha?: string;
   title?: string;
+  /** Selectable settings profiles of the repository (issue #52). */
+  profiles?: { id: string; name: string }[];
 }>();
 
 const status = ref(props.initialPreview?.status ?? "idle");
@@ -38,6 +40,14 @@ const logs = ref<string[]>(
 );
 const actionError = ref<string | null>(null);
 const busy = ref(false);
+
+// 起動/再ビルドに使うプロファイル(""=既定の設定)。初期値は前回ビルド時の選択。
+const selectedProfileId = ref(props.initialPreview?.profileId ?? "");
+// 現在のプレビューが使っているプロファイル(表示用)。
+const currentProfileId = ref<string | null>(props.initialPreview?.profileId ?? null);
+const currentProfileName = computed(
+  () => props.profiles?.find((p) => p.id === currentProfileId.value)?.name ?? null,
+);
 
 // 再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約)。
 // 全て「チェック=破棄/再作成」の極性に統一する(issue #50)。resetTunnel は
@@ -95,19 +105,26 @@ async function refresh() {
       url.value = preview.url;
       previewId.value = preview.id;
       commitSha.value = preview.commitSha;
+      currentProfileId.value = preview.profileId;
     }
   } catch {
     /* ignore */
   }
 }
 
-// ビルドオプション: noCache(#20) / resetVolumes(#41) / keepTunnel(#42)。
+// ビルドオプション: noCache(#20) / resetVolumes(#41) / keepTunnel(#42) / profileId(#52)。
 async function start(opts: StartPreviewOptions = {}) {
   busy.value = true;
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await props.actions.start(opts);
+    // プロファイル一覧があるときのみ選択を明示送信する(""=null=既定の設定)。
+    // 未送信(undefined)ならサーバー側で前回のプロファイルが維持される。
+    const profileOpts =
+      props.profiles && props.profiles.length > 0
+        ? { profileId: selectedProfileId.value || null }
+        : {};
+    const res = await props.actions.start({ ...profileOpts, ...opts });
     previewId.value = res.previewId;
     status.value = "pending";
     connect(res.previewId);
@@ -209,6 +226,22 @@ onUnmounted(disconnect);
           </BaseButton>
         </template>
         <template v-else>
+          <!-- 設定プロファイルの選択(issue #52)。再ビルドでもvolume/tunnelは維持される -->
+          <label
+            v-if="profiles && profiles.length > 0 && status !== 'paused'"
+            class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
+            title="ビルドに使う設定プロファイル。既定の設定を項目単位で上書きします"
+          >
+            プロファイル
+            <select
+              v-model="selectedProfileId"
+              class="rounded-md border border-gray-300 px-2 py-1 text-xs focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900"
+            >
+              <option value="">既定の設定</option>
+              <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </label>
+
           <!-- 稼働中の再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約) -->
           <div
             v-if="status === 'running'"
@@ -321,6 +354,10 @@ onUnmounted(disconnect);
           <BaseBadge v-if="isOutdated" tone="amber">新しいコミットあり</BaseBadge>
           <BaseBadge v-else tone="green">最新</BaseBadge>
         </template>
+        <!-- ビルドに使われた設定プロファイル(issue #52) -->
+        <BaseBadge v-if="currentProfileName" tone="purple">
+          プロファイル: {{ currentProfileName }}
+        </BaseBadge>
       </p>
 
       <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>

@@ -2,18 +2,14 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
-import {
-  cleanupTestDb,
-  createTestPrisma,
-  runMigrateDeploy,
-  setupTestDb,
-} from "../helpers";
+import { cleanupTestDb, createTestPrisma, runMigrateDeploy, setupTestDb } from "../helpers";
 
 const EXPECTED_TABLES = [
   "Job",
   "PreviewEnvironment",
   "PullRequest",
   "Repository",
+  "SettingsProfile",
   "User",
   "_prisma_migrations",
 ];

@@ -23,6 +23,19 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+/** Profile payload for settings sync; null fields inherit the defaults (issue #52). */
+export interface ProfileInput {
+  /** Existing profile id to update; omit to create a new profile. */
+  id?: string;
+  name: string;
+  composePath: string | null;
+  webService: string | null;
+  internalPort: number | null;
+  fileRewrites: RewriteRule[] | null;
+  overlayFiles: OverlayFile[] | null;
+  resetVolumes: boolean | null;
+}
+
 export interface RepoSettingsInput {
   composePath: string;
   webService: string | null;
@@ -30,6 +43,7 @@ export interface RepoSettingsInput {
   fileRewrites: RewriteRule[];
   overlayFiles: OverlayFile[];
   resetVolumes: boolean;
+  profiles: ProfileInput[];
 }
 
 export interface CreateUserInput {
@@ -37,11 +51,13 @@ export interface CreateUserInput {
   password: string;
 }
 
-/** Build options for starting/rebuilding a preview (issue #20/#41/#42). */
+/** Build options for starting/rebuilding a preview (issue #20/#41/#42/#52). */
 export interface StartPreviewOptions {
   noCache?: boolean;
   resetVolumes?: boolean;
   keepTunnel?: boolean;
+  /** Settings profile to build with: id, null for the defaults, undefined to keep current. */
+  profileId?: string | null;
 }
 
 export const api = {
