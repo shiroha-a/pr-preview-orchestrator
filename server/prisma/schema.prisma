@@ -18,6 +18,7 @@ model Repository {
   // Optional: only set when accessed via a GitHub App installation (legacy).
   installationId Int?
   // Preview configuration for this repository.
+  // Newline-separated compose file paths; later files override earlier ones (issue #52).
   composePath    String   @default("docker-compose.yml")
   webService     String?
   internalPort   Int?
@@ -32,8 +33,34 @@ model Repository {
 
   pullRequests PullRequest[]
   previews     PreviewEnvironment[]
+  profiles     SettingsProfile[]
 
   @@unique([owner, name])
+}
+
+/// A named settings profile overriding the repository defaults (issue #52).
+/// Each nullable field inherits the repository default when null and replaces
+/// it (field-level, no merging) when set.
+model SettingsProfile {
+  id           String   @id @default(cuid())
+  repositoryId String
+  name         String
+  // Newline-separated compose file paths; later files override earlier ones.
+  composePath  String?
+  webService   String?
+  internalPort Int?
+  // File rewrite rules (JSON array).
+  fileRewrites String?
+  // Overlay files (JSON array).
+  overlayFiles String?
+  resetVolumes Boolean?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  repository Repository           @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  previews   PreviewEnvironment[]
+
+  @@unique([repositoryId, name])
 }
 
 /// A cached pull request fetched from GitHub.
@@ -82,11 +109,14 @@ model PreviewEnvironment {
   hostPort       Int?
   commitSha      String?
   logs           String   @default("")
+  // Settings profile used for the last build; null = repository defaults (issue #52).
+  profileId      String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  pullRequest PullRequest? @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
-  repository  Repository?  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  pullRequest PullRequest?     @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  repository  Repository?      @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  profile     SettingsProfile? @relation(fields: [profileId], references: [id], onDelete: SetNull)
 
   @@unique([repositoryId, branchRef])
 }

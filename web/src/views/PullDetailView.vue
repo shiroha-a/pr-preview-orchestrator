@@ -4,7 +4,7 @@ import { useRoute } from "vue-router";
 import { ExternalLink, GitBranch, RefreshCw } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { CommentDTO, PreviewDTO, PullRequestDTO } from "../types";
+import type { CommentDTO, PreviewDTO, PullRequestDTO, SettingsProfileDTO } from "../types";
 import CommentList from "../components/CommentList.vue";
 import DiffView from "../components/DiffView.vue";
 import DraftBadge from "../components/DraftBadge.vue";
@@ -40,6 +40,18 @@ const diffLoading = ref(true);
 const comments = ref<CommentDTO[]>([]);
 const commentsLoading = ref(true);
 const refreshing = ref(false);
+
+// 起動/再ビルド時に選択できる設定プロファイル(issue #52)。
+const profiles = ref<SettingsProfileDTO[]>([]);
+
+async function loadProfiles() {
+  try {
+    const { repository } = await api.getRepo(owner, name);
+    profiles.value = repository.profiles ?? [];
+  } catch {
+    /* ignore: プロファイル無しでもパネルは動作する */
+  }
+}
 
 // PR本文中のHTMLコメント(<!-- ... -->)は表示しない(issue #9)。
 const cleanBody = computed(() => (pr.value?.body ?? "").replace(/<!--[\s\S]*?-->/g, "").trim());
@@ -94,6 +106,7 @@ onMounted(() => {
   void loadMain();
   void loadDiff();
   void loadComments();
+  void loadProfiles();
 });
 </script>
 
@@ -156,6 +169,7 @@ onMounted(() => {
         :initial-preview="preview"
         :actions="previewActions"
         :pr-head-sha="pr.headSha"
+        :profiles="profiles"
       />
 
       <section v-if="cleanBody" class="space-y-2">

@@ -3,7 +3,7 @@ import { onMounted, ref } from "vue";
 import { GitBranch, Play, RefreshCw } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { BranchInfo, PreviewDTO } from "../types";
+import type { BranchInfo, PreviewDTO, SettingsProfileDTO } from "../types";
 import PreviewPanel from "./PreviewPanel.vue";
 import type { PreviewActions } from "./PreviewPanel.vue";
 import BaseButton from "./ui/BaseButton.vue";
@@ -18,6 +18,19 @@ const starting = ref(false);
 const startError = ref<string | null>(null);
 
 const previews = ref<PreviewDTO[]>([]);
+
+// 起動時に選択できる設定プロファイル(issue #52)。""=既定の設定。
+const profiles = ref<SettingsProfileDTO[]>([]);
+const selectedProfileId = ref("");
+
+async function loadProfiles() {
+  try {
+    const { repository } = await api.getRepo(props.owner, props.name);
+    profiles.value = repository.profiles ?? [];
+  } catch {
+    /* ignore: プロファイル無しでも起動できる */
+  }
+}
 
 // ブランチ一覧はサーバー側で5分キャッシュされる。マウント時に自動取得し、
 // 「更新」ボタン(force=true)で最新化する。
@@ -52,7 +65,9 @@ async function startBranch() {
   starting.value = true;
   startError.value = null;
   try {
-    await api.startBranchPreview(props.owner, props.name, branch);
+    await api.startBranchPreview(props.owner, props.name, branch, {
+      profileId: selectedProfileId.value || null,
+    });
     await loadPreviews();
   } catch (e) {
     startError.value = e instanceof Error ? e.message : "起動に失敗しました";
@@ -75,6 +90,7 @@ function branchActions(preview: PreviewDTO): PreviewActions {
 onMounted(() => {
   void loadPreviews();
   void loadBranches();
+  void loadProfiles();
 });
 </script>
 
@@ -105,6 +121,16 @@ onMounted(() => {
             <RefreshCw :class="['h-4 w-4', branchesLoading && 'animate-spin']" />
             <span class="hidden sm:inline">更新</span>
           </BaseButton>
+          <!-- 設定プロファイルの選択(issue #52) -->
+          <select
+            v-if="profiles.length > 0"
+            v-model="selectedProfileId"
+            class="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none dark:border-gray-700 dark:bg-gray-900"
+            title="ビルドに使う設定プロファイル"
+          >
+            <option value="">既定の設定</option>
+            <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
           <BaseButton size="sm" :disabled="starting || !selectedBranch" @click="startBranch">
             <Play class="h-4 w-4" />
             {{ starting ? "起動中..." : "起動" }}
@@ -123,6 +149,7 @@ onMounted(() => {
       :initial-preview="p"
       :actions="branchActions(p)"
       :title="`ブランチ: ${p.branchRef}`"
+      :profiles="profiles"
     />
   </section>
 </template>
