@@ -1,22 +1,20 @@
 import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
 import { Hono } from "hono";
 
-import { cleanupTestDb, createTestPrisma, setupTestDb, testDbUrl, truncateAll } from "../helpers";
-
-// routes/repositories.ts はグローバルの prisma(env.DATABASE_URL)を使うため、
-// import 前にテストDBを指す環境変数を設定する(dotenvは既存値を上書きしない)。
-process.env.DATABASE_URL = testDbUrl();
-const { repositoriesRoutes } = await import("../../src/routes/repositories");
+// routes/repositories.ts はグローバルの prisma を使う。テストDBへの向き先は
+// vitest.config.ts の env.DATABASE_URL で全テストファイル共通に固定されている
+// (isolate:false のためどのファイルが最初にimportしても同じDBを指す)。
+import { repositoriesRoutes } from "../../src/routes/repositories";
+import { createTestPrisma, prepareSharedTestDb, truncateAll } from "../helpers";
 
 const prisma = createTestPrisma();
 
 beforeAll(() => {
-  setupTestDb();
+  prepareSharedTestDb();
 });
 
 afterAll(async () => {
   await prisma.$disconnect();
-  cleanupTestDb();
 });
 
 beforeEach(async () => {
@@ -89,6 +87,33 @@ describe("PUT /api/repositories/:owner/:name/settings (profiles)", () => {
       where: { repositoryId: repo.id },
     });
     expect(remaining.map((p) => p.name)).toEqual(["既存"]);
+  });
+
+  it("deleteエントリを含むオーバーレイを保存できる(issue #56)", async () => {
+    await createRepo();
+    const app = createApp();
+
+    const res = await putSettings(app, {
+      ...baseSettings(),
+      overlayFiles: [{ path: "default.yml", content: "D" }],
+      profiles: [
+        {
+          name: "追加削除",
+          overlayFiles: [
+            { path: "add.yml", content: "X" },
+            { path: "default.yml", delete: true },
+          ],
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      repository: { profiles: Array<{ overlayFiles: string | null }> };
+    };
+    expect(JSON.parse(body.repository.profiles[0].overlayFiles ?? "[]")).toEqual([
+      { path: "add.yml", content: "X" },
+      { path: "default.yml", delete: true },
+    ]);
   });
 
   it("名前が重複するプロファイルは400", async () => {

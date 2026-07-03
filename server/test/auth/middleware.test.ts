@@ -3,22 +3,16 @@ import { Hono } from "hono";
 
 import { dbBasicAuth, setCachedUserCount } from "../../src/auth/middleware";
 import { hashPassword } from "../../src/auth/password";
-import {
-  basicAuthHeader,
-  createTestPrisma,
-  setupTestDb,
-  truncateAll,
-  cleanupTestDb,
-} from "../helpers";
+import { basicAuthHeader, createTestPrisma, prepareSharedTestDb, truncateAll } from "../helpers";
 
 const prisma = createTestPrisma();
 
 beforeAll(() => {
-  setupTestDb();
+  prepareSharedTestDb();
 });
 
-afterAll(() => {
-  cleanupTestDb();
+afterAll(async () => {
+  await prisma.$disconnect();
 });
 
 beforeEach(async () => {
@@ -56,7 +50,9 @@ describe("dbBasicAuth", () => {
     const app = new Hono()
       .use("*", dbBasicAuth(prisma))
       .get("/", (c) => c.json({ user: c.get("authUsername") }));
-    const res = await app.request("/", { headers: { Authorization: basicAuthHeader("admin", "pass") } });
+    const res = await app.request("/", {
+      headers: { Authorization: basicAuthHeader("admin", "pass") },
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ user: "admin" });
   });
@@ -68,7 +64,9 @@ describe("dbBasicAuth", () => {
     setCachedUserCount(1);
 
     const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
-    const res = await app.request("/", { headers: { Authorization: basicAuthHeader("admin", "wrong") } });
+    const res = await app.request("/", {
+      headers: { Authorization: basicAuthHeader("admin", "wrong") },
+    });
     expect(res.status).toBe(401);
   });
 
@@ -79,7 +77,9 @@ describe("dbBasicAuth", () => {
     setCachedUserCount(1);
 
     const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
-    const res = await app.request("/", { headers: { Authorization: basicAuthHeader("nosuchuser", "pass") } });
+    const res = await app.request("/", {
+      headers: { Authorization: basicAuthHeader("nosuchuser", "pass") },
+    });
     expect(res.status).toBe(401);
   });
 

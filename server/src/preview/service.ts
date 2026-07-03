@@ -10,7 +10,7 @@ import { env } from "../env";
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
-import { applyOverlays, parseOverlayFiles } from "./overlay";
+import { applyOverlays } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { composeFileArgs, type EffectiveSettings, resolveSettings } from "./settings";
 import { getTunnelUrl, isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
@@ -435,8 +435,8 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
 
     // Write overlay files (e.g. a test-specific compose file or config from
     // outside the target repo) into the workspace. Content supports the same
-    // template variables.
-    const overlays = parseOverlayFiles(settings.overlayFiles);
+    // template variables. 既定+プロファイルのマージ済み(issue #56)。
+    const overlays = settings.overlayFiles;
     if (overlays.length > 0) {
       log(`Writing ${overlays.length} overlay file(s)...`);
       applyOverlays(dir, overlays, templateVars, log);

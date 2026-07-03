@@ -169,7 +169,15 @@ const overlayFileSchema = z.object({
   content: z.string(),
 });
 
+// Profile overlay entry: add/replace a file, or remove a default one (issue #56).
+const profileOverlayEntrySchema = z.object({
+  path: z.string().min(1),
+  content: z.string().optional(),
+  delete: z.boolean().optional(),
+});
+
 // Profile overrides: null = inherit the repository default (issue #52).
+// overlayFiles is additive over the defaults instead of replacing them (issue #56).
 const profileSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(1),
@@ -177,7 +185,7 @@ const profileSchema = z.object({
   webService: z.string().nullable().optional(),
   internalPort: z.coerce.number().int().positive().nullable().optional(),
   fileRewrites: z.array(rewriteRuleSchema).nullable().optional(),
-  overlayFiles: z.array(overlayFileSchema).nullable().optional(),
+  overlayFiles: z.array(profileOverlayEntrySchema).nullable().optional(),
   resetVolumes: z.boolean().nullable().optional(),
 });
 

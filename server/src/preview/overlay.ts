@@ -10,6 +10,17 @@ export interface OverlayFile {
   content: string;
 }
 
+/**
+ * Overlay entry stored on a settings profile (issue #56). Applied on top of the
+ * repository default overlays: adds a file (replacing the default with the same
+ * path), or removes a default file when `delete` is true.
+ */
+export interface ProfileOverlayEntry {
+  path: string;
+  content?: string;
+  delete?: boolean;
+}
+
 /** Parse the JSON-encoded overlay files stored on a repository. */
 export function parseOverlayFiles(json: string | null | undefined): OverlayFile[] {
   if (!json) return [];
@@ -22,6 +33,21 @@ export function parseOverlayFiles(json: string | null | undefined): OverlayFile[
         o !== null &&
         typeof (o as OverlayFile).path === "string" &&
         typeof (o as OverlayFile).content === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** Parse the JSON-encoded overlay entries stored on a settings profile (issue #56). */
+export function parseProfileOverlayEntries(json: string | null | undefined): ProfileOverlayEntry[] {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (o): o is ProfileOverlayEntry =>
+        typeof o === "object" && o !== null && typeof (o as ProfileOverlayEntry).path === "string",
     );
   } catch {
     return [];

@@ -12,6 +12,14 @@ export interface OverlayFile {
   content: string;
 }
 
+// プロファイルのオーバーレイエントリ: 既定への追加(同pathは上書き)または
+// delete=trueで既定ファイルの除外(issue #56)。
+export interface ProfileOverlayEntry {
+  path: string;
+  content?: string;
+  delete?: boolean;
+}
+
 export interface PrLabel {
   name: string;
   color: string;

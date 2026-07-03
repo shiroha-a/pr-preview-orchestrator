@@ -4,22 +4,16 @@ import { Hono } from "hono";
 import { createUsersRoutes } from "../../src/routes/users";
 import { hashPassword } from "../../src/auth/password";
 import { setCachedUserCount, dbBasicAuth } from "../../src/auth/middleware";
-import {
-  basicAuthHeader,
-  createTestPrisma,
-  setupTestDb,
-  truncateAll,
-  cleanupTestDb,
-} from "../helpers";
+import { basicAuthHeader, createTestPrisma, prepareSharedTestDb, truncateAll } from "../helpers";
 
 const prisma = createTestPrisma();
 
 beforeAll(() => {
-  setupTestDb();
+  prepareSharedTestDb();
 });
 
-afterAll(() => {
-  cleanupTestDb();
+afterAll(async () => {
+  await prisma.$disconnect();
 });
 
 beforeEach(async () => {
