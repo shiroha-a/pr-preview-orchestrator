@@ -5,7 +5,7 @@ import { Download, Plus, Trash2, Upload } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { ProfileInput } from "../api/client";
-import type { OverlayFile, RewriteRule, SettingsProfileDTO } from "../types";
+import type { OverlayFile, ProfileOverlayEntry, RewriteRule, SettingsProfileDTO } from "../types";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 import OverlayFilesEditor from "../components/OverlayFilesEditor.vue";
@@ -32,7 +32,8 @@ const overlays = ref<OverlayFile[]>([]);
 /**
  * Editable form state for one settings profile. Each `overrides.*` flag maps to
  * a nullable API field: unchecked = null = inherit the repository default
- * (issue #52).
+ * (issue #52). Overlay files are additive over the defaults: `overlays` holds
+ * added/replaced files and `deletePaths` the default paths to drop (issue #56).
  */
 interface ProfileForm {
   id: string | null;
@@ -51,6 +52,7 @@ interface ProfileForm {
   resetVolumes: boolean;
   rules: RewriteRule[];
   overlays: OverlayFile[];
+  deletePaths: string[];
 }
 
 const profiles = ref<ProfileForm[]>([]);
@@ -68,6 +70,8 @@ function parseJsonArray<T>(value: string | null): T[] {
 }
 
 function profileFormFromDTO(dto: SettingsProfileDTO): ProfileForm {
+  // オーバーレイは既定への差分(追加/上書きとdelete指定)として保持する(issue #56)。
+  const overlayEntries = parseJsonArray<ProfileOverlayEntry>(dto.overlayFiles);
   return {
     id: dto.id,
     name: dto.name,
@@ -88,10 +92,10 @@ function profileFormFromDTO(dto: SettingsProfileDTO): ProfileForm {
       dto.fileRewrites != null
         ? parseJsonArray<RewriteRule>(dto.fileRewrites)
         : rules.value.map((r) => ({ ...r })),
-    overlays:
-      dto.overlayFiles != null
-        ? parseJsonArray<OverlayFile>(dto.overlayFiles)
-        : overlays.value.map((o) => ({ ...o })),
+    overlays: overlayEntries
+      .filter((e) => !e.delete)
+      .map((e) => ({ path: e.path, content: e.content ?? "" })),
+    deletePaths: overlayEntries.filter((e) => e.delete).map((e) => e.path),
   };
 }
 
@@ -133,11 +137,33 @@ function addProfile() {
     internalPort: internalPort.value,
     resetVolumes: resetVolumes.value,
     rules: rules.value.map((r) => ({ ...r })),
-    overlays: overlays.value.map((o) => ({ ...o })),
+    // オーバーレイは既定への追加方式なので空から始める(issue #56)。
+    overlays: [],
+    deletePaths: [],
   });
 }
 function removeProfile(index: number) {
   profiles.value.splice(index, 1);
+}
+
+// --- プロファイルのオーバーレイ削除指定(issue #56) ---
+
+/** 削除チェックボックスに表示するパス一覧(既定のパス+保存済みの削除指定)。 */
+function overlayDeleteCandidates(p: ProfileForm): string[] {
+  const paths = overlays.value.map((o) => o.path.trim()).filter(Boolean);
+  for (const path of p.deletePaths) {
+    if (!paths.includes(path)) paths.push(path);
+  }
+  return paths;
+}
+
+function toggleOverlayDelete(p: ProfileForm, path: string, event: Event) {
+  const checked = (event.target as HTMLInputElement).checked;
+  if (checked) {
+    if (!p.deletePaths.includes(path)) p.deletePaths.push(path);
+  } else {
+    p.deletePaths = p.deletePaths.filter((x) => x !== path);
+  }
 }
 
 function toProfileInput(p: ProfileForm): ProfileInput {
@@ -150,7 +176,15 @@ function toProfileInput(p: ProfileForm): ProfileInput {
     fileRewrites: p.overrides.fileRewrites
       ? p.rules.filter((r) => r.file.trim() && r.pattern.trim())
       : null,
-    overlayFiles: p.overrides.overlayFiles ? p.overlays.filter((o) => o.path.trim()) : null,
+    // 追加/上書きエントリ+delete指定を1つの配列にまとめる(issue #56)。
+    overlayFiles: p.overrides.overlayFiles
+      ? [
+          ...p.overlays
+            .filter((o) => o.path.trim())
+            .map((o) => ({ path: o.path, content: o.content })),
+          ...p.deletePaths.map((path) => ({ path, delete: true })),
+        ]
+      : null,
     resetVolumes: p.overrides.resetVolumes ? p.resetVolumes : null,
   };
 }
@@ -438,10 +472,37 @@ const textareaClass =
               <div>
                 <label class="flex items-center gap-2 font-medium">
                   <input v-model="p.overrides.overlayFiles" type="checkbox" class="h-4 w-4" />
-                  オーバーレイファイルを上書き
+                  オーバーレイファイルを追加・削除
                 </label>
-                <div v-if="p.overrides.overlayFiles" class="mt-2">
-                  <OverlayFilesEditor v-model="p.overlays" />
+                <div v-if="p.overrides.overlayFiles" class="mt-2 space-y-2">
+                  <p class="text-xs text-gray-500">
+                    既定のオーバーレイファイルは残したまま、ファイルを追加します(既定と同じパスは内容を上書き)。既定のファイルを配置したくない場合は「配置しない」にチェックします。
+                  </p>
+                  <div v-if="overlayDeleteCandidates(p).length > 0">
+                    <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                      既定のファイル
+                    </p>
+                    <label
+                      v-for="path in overlayDeleteCandidates(p)"
+                      :key="path"
+                      class="flex items-center gap-2 py-0.5 text-xs"
+                    >
+                      <input
+                        type="checkbox"
+                        class="h-3.5 w-3.5"
+                        :checked="p.deletePaths.includes(path)"
+                        @change="toggleOverlayDelete(p, path, $event)"
+                      />
+                      <code>{{ path }}</code>
+                      <span class="text-gray-400">配置しない</span>
+                    </label>
+                  </div>
+                  <div>
+                    <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                      追加/上書きするファイル
+                    </p>
+                    <OverlayFilesEditor v-model="p.overlays" />
+                  </div>
                 </div>
               </div>
 

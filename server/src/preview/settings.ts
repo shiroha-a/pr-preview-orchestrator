@@ -1,5 +1,12 @@
 import type { Repository, SettingsProfile } from "../generated/prisma/client";
 
+import {
+  type OverlayFile,
+  parseOverlayFiles,
+  parseProfileOverlayEntries,
+  type ProfileOverlayEntry,
+} from "./overlay";
+
 /**
  * Preview settings resolved for a single build: the repository defaults,
  * optionally overridden field-by-field by a settings profile (issue #52).
@@ -11,25 +18,51 @@ export interface EffectiveSettings {
   internalPort: number | null;
   /** JSON-encoded rewrite rules. */
   fileRewrites: string | null;
-  /** JSON-encoded overlay files. */
-  overlayFiles: string | null;
+  /** Resolved overlay files: repository defaults merged with the profile (issue #56). */
+  overlayFiles: OverlayFile[];
   resetVolumes: boolean;
 }
 
 /**
+ * Apply a profile's overlay entries on top of the repository default overlays
+ * (issue #56). An entry adds a file (replacing a default with the same path in
+ * place), or removes the default file when `delete` is true. Entries are
+ * applied in order; new paths are appended.
+ */
+export function mergeOverlayFiles(
+  defaults: OverlayFile[],
+  entries: ProfileOverlayEntry[],
+): OverlayFile[] {
+  const merged = new Map(defaults.map((o) => [o.path, o]));
+  for (const entry of entries) {
+    if (entry.delete) {
+      merged.delete(entry.path);
+    } else {
+      merged.set(entry.path, { path: entry.path, content: entry.content ?? "" });
+    }
+  }
+  return [...merged.values()];
+}
+
+/**
  * Merge a settings profile over the repository defaults. Each non-null profile
- * field replaces the corresponding default (no merging within a field).
+ * field replaces the corresponding default, except overlayFiles which is
+ * additive: the profile's entries add to / remove from the defaults (issue #56).
  */
 export function resolveSettings(
   repo: Repository,
   profile: SettingsProfile | null | undefined,
 ): EffectiveSettings {
+  const defaultOverlays = parseOverlayFiles(repo.overlayFiles);
   return {
     composePath: profile?.composePath ?? repo.composePath,
     webService: profile?.webService ?? repo.webService,
     internalPort: profile?.internalPort ?? repo.internalPort,
     fileRewrites: profile?.fileRewrites ?? repo.fileRewrites,
-    overlayFiles: profile?.overlayFiles ?? repo.overlayFiles,
+    overlayFiles:
+      profile?.overlayFiles != null
+        ? mergeOverlayFiles(defaultOverlays, parseProfileOverlayEntries(profile.overlayFiles))
+        : defaultOverlays,
     resetVolumes: profile?.resetVolumes ?? repo.resetVolumes,
   };
 }

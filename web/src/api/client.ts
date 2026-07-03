@@ -4,6 +4,7 @@ import type {
   OverlayFile,
   PreviewDTO,
   PreviewListItem,
+  ProfileOverlayEntry,
   PullRequestDTO,
   RepositoryDTO,
   RewriteRule,
@@ -32,7 +33,8 @@ export interface ProfileInput {
   webService: string | null;
   internalPort: number | null;
   fileRewrites: RewriteRule[] | null;
-  overlayFiles: OverlayFile[] | null;
+  /** Additive entries applied over the default overlays (issue #56). */
+  overlayFiles: ProfileOverlayEntry[] | null;
   resetVolumes: boolean | null;
 }
 

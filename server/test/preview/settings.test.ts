@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { Repository, SettingsProfile } from "../../src/generated/prisma/client";
-import { composeFileArgs, parseComposePaths, resolveSettings } from "../../src/preview/settings";
+import {
+  composeFileArgs,
+  mergeOverlayFiles,
+  parseComposePaths,
+  resolveSettings,
+} from "../../src/preview/settings";
 
 function makeRepo(overrides: Partial<Repository> = {}): Repository {
   return {
@@ -74,7 +79,7 @@ describe("resolveSettings", () => {
       webService: "web",
       internalPort: 3000,
       fileRewrites: null,
-      overlayFiles: null,
+      overlayFiles: [],
       resetVolumes: false,
     });
   });
@@ -91,7 +96,7 @@ describe("resolveSettings", () => {
       webService: "web",
       internalPort: 8080,
       fileRewrites: '[{"file":"a"}]',
-      overlayFiles: null,
+      overlayFiles: [],
       resetVolumes: true,
     });
   });
@@ -100,5 +105,81 @@ describe("resolveSettings", () => {
     const repo = makeRepo({ resetVolumes: true });
     const profile = makeProfile({ resetVolumes: false });
     expect(resolveSettings(repo, profile).resetVolumes).toBe(false);
+  });
+
+  it("プロファイルのオーバーレイは既定に追加される(issue #56)", () => {
+    const repo = makeRepo({
+      overlayFiles: JSON.stringify([{ path: "a.yml", content: "A" }]),
+    });
+    const profile = makeProfile({
+      overlayFiles: JSON.stringify([{ path: "b.yml", content: "B" }]),
+    });
+    expect(resolveSettings(repo, profile).overlayFiles).toEqual([
+      { path: "a.yml", content: "A" },
+      { path: "b.yml", content: "B" },
+    ]);
+  });
+
+  it("プロファイルのオーバーレイのdeleteエントリは既定のファイルを除外する(issue #56)", () => {
+    const repo = makeRepo({
+      overlayFiles: JSON.stringify([
+        { path: "a.yml", content: "A" },
+        { path: "b.yml", content: "B" },
+      ]),
+    });
+    const profile = makeProfile({
+      overlayFiles: JSON.stringify([{ path: "a.yml", delete: true }]),
+    });
+    expect(resolveSettings(repo, profile).overlayFiles).toEqual([{ path: "b.yml", content: "B" }]);
+  });
+});
+
+describe("mergeOverlayFiles", () => {
+  const defaults = [
+    { path: "a.yml", content: "A" },
+    { path: "b.yml", content: "B" },
+  ];
+
+  it("新しいpathのエントリを末尾に追加する", () => {
+    expect(mergeOverlayFiles(defaults, [{ path: "c.yml", content: "C" }])).toEqual([
+      { path: "a.yml", content: "A" },
+      { path: "b.yml", content: "B" },
+      { path: "c.yml", content: "C" },
+    ]);
+  });
+
+  it("同じpathのエントリは位置を維持したまま内容を上書きする", () => {
+    expect(mergeOverlayFiles(defaults, [{ path: "a.yml", content: "A2" }])).toEqual([
+      { path: "a.yml", content: "A2" },
+      { path: "b.yml", content: "B" },
+    ]);
+  });
+
+  it("deleteエントリは既定のファイルを取り除く", () => {
+    expect(mergeOverlayFiles(defaults, [{ path: "b.yml", delete: true }])).toEqual([
+      { path: "a.yml", content: "A" },
+    ]);
+  });
+
+  it("既定に無いpathのdeleteエントリは何もしない", () => {
+    expect(mergeOverlayFiles(defaults, [{ path: "x.yml", delete: true }])).toEqual(defaults);
+  });
+
+  it("contentが無い追加エントリは空文字として扱う", () => {
+    expect(mergeOverlayFiles([], [{ path: "empty.txt" }])).toEqual([
+      { path: "empty.txt", content: "" },
+    ]);
+  });
+
+  it("エントリは順に適用される(削除後の追加は復活する)", () => {
+    expect(
+      mergeOverlayFiles(defaults, [
+        { path: "a.yml", delete: true },
+        { path: "a.yml", content: "A3" },
+      ]),
+    ).toEqual([
+      { path: "b.yml", content: "B" },
+      { path: "a.yml", content: "A3" },
+    ]);
   });
 });
