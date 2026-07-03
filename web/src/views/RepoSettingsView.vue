@@ -163,7 +163,8 @@ function currentSettings() {
     fileRewrites: rules.value.filter((r) => r.file.trim() && r.pattern.trim()),
     overlayFiles: overlays.value.filter((o) => o.path.trim()),
     resetVolumes: resetVolumes.value,
-    profiles: profiles.value.filter((p) => p.name.trim()).map(toProfileInput),
+    // 名前空欄のプロファイルも除外せず送る(保存前のバリデーションで弾く。issue #54)。
+    profiles: profiles.value.map(toProfileInput),
   };
 }
 
@@ -171,6 +172,14 @@ async function save() {
   saving.value = true;
   error.value = null;
   saved.value = false;
+  // 名前空欄のプロファイルを無言で捨てると、同期削除で「保存したつもりが消えた」に
+  // なるため、保存せずエラーで知らせる(issue #54)。
+  if (profiles.value.some((p) => !p.name.trim())) {
+    error.value =
+      "プロファイル名が空欄です。名前を入力するか、不要なプロファイルは削除してください。";
+    saving.value = false;
+    return;
+  }
   try {
     const { repository } = await api.updateRepoSettings(owner, name, currentSettings());
     // 新規プロファイルに採番されたidを反映する(再保存時の重複作成を防ぐ)。

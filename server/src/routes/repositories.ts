@@ -203,6 +203,10 @@ repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
 
   const profiles = parsed.data.profiles ?? [];
   const profileNames = profiles.map((p) => p.name.trim());
+  // zodのmin(1)は空白のみの名前を通すため、trim後の空文字はここで拒否する(issue #54)。
+  if (profileNames.some((n) => n.length === 0)) {
+    return c.json({ error: "プロファイル名を入力してください。" }, 400);
+  }
   if (new Set(profileNames).size !== profileNames.length) {
     return c.json({ error: "プロファイル名が重複しています。" }, 400);
   }
