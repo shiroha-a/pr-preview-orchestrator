@@ -664,11 +664,25 @@ export async function stopPreview(previewId: string): Promise<void> {
 }
 
 /**
+ * Restart options (issue #58): the "discard" checkboxes also apply to a plain
+ * restart, not only to a rebuild.
+ * - `resetVolumes`: destroy volumes and recreate the containers from the
+ *   existing images (no rebuild).
+ * - `resetTunnel`: discard the tunnel container and create a new one (the
+ *   public URL changes).
+ */
+export interface RestartOptions {
+  resetVolumes?: boolean;
+  resetTunnel?: boolean;
+}
+
+/**
  * Restart the preview's containers without rebuilding (issue #15).
  * Reuses the existing Cloudflare tunnel when it is still alive; otherwise starts
  * a new one (e.g. after a server restart).
  */
-export async function restartPreview(previewId: string): Promise<void> {
+export async function restartPreview(previewId: string, opts: RestartOptions = {}): Promise<void> {
+  const { resetVolumes = false, resetTunnel = false } = opts;
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) throw new Error("Preview environment not found");
   const preview = loaded;
@@ -693,31 +707,66 @@ export async function restartPreview(previewId: string): Promise<void> {
     }
 
     await setStatus("building");
-    log("Restarting containers (docker compose restart)...");
-    const code = await runCommand(
-      "docker",
-      [
-        "compose",
-        ...composeFileArgs(settings.composePath),
-        "-f",
-        OVERRIDE_FILE,
-        "-p",
-        preview.composeProject,
-        "restart",
-      ],
-      { cwd: dir, onLine: log, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS },
-    );
-    if (code !== 0) throw new Error(`docker compose restart exited with code ${code}`);
+    const composeArgs = [
+      "compose",
+      ...composeFileArgs(settings.composePath),
+      "-f",
+      OVERRIDE_FILE,
+      "-p",
+      preview.composeProject,
+    ];
+    if (resetVolumes) {
+      // ボリューム破棄は `restart` では反映されないため down -v で作り直す(issue #58)。
+      // イメージは既存のものを使うので --build は付けない(再ビルドしない)。
+      log("Resetting volumes (docker compose down -v)...");
+      const downCode = await runCommand(
+        "docker",
+        [...composeArgs, "down", "-v", "--remove-orphans"],
+        {
+          cwd: dir,
+          onLine: log,
+          timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+        },
+      );
+      if (downCode !== 0) throw new Error(`docker compose down exited with code ${downCode}`);
+      log("Recreating containers (docker compose up -d)...");
+      const upCode = await runCommand("docker", [...composeArgs, "up", "-d"], {
+        cwd: dir,
+        onLine: log,
+        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+      });
+      if (upCode !== 0) throw new Error(`docker compose up exited with code ${upCode}`);
+    } else {
+      log("Restarting containers (docker compose restart)...");
+      const code = await runCommand("docker", [...composeArgs, "restart"], {
+        cwd: dir,
+        onLine: log,
+        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+      });
+      if (code !== 0) throw new Error(`docker compose restart exited with code ${code}`);
+    }
 
-    // トンネルは流用。生きていなければ(サーバー再起動後など)張り直す。
+    // トンネルは流用。破棄指定(issue #58)か、生きていなければ(サーバー再起動後など)張り直す。
     let url = preview.url ?? `http://${env.PREVIEW_HOST}:${preview.hostPort ?? 0}`;
-    if (env.PREVIEW_TUNNEL && preview.hostPort && !(await isTunnelAlive(previewId))) {
+    if (
+      env.PREVIEW_TUNNEL &&
+      preview.hostPort &&
+      (resetTunnel || !(await isTunnelAlive(previewId)))
+    ) {
       try {
-        log("Tunnel is not active; starting a new Cloudflare Quick Tunnel...");
+        log(
+          resetTunnel
+            ? "Discarding the tunnel and starting a new Cloudflare Quick Tunnel..."
+            : "Tunnel is not active; starting a new Cloudflare Quick Tunnel...",
+        );
         url = await startTunnel(previewId, preview.hostPort);
         log(`Tunnel ready: ${url}`);
       } catch (e) {
-        log(`WARN: tunnel failed (${e instanceof Error ? e.message : String(e)}); keeping ${url}`);
+        // トンネル破棄時は旧URLが既に無効なので直接アクセス用URLへ退避する。
+        if (resetTunnel) url = `http://${env.PREVIEW_HOST}:${preview.hostPort}`;
+        log(
+          `WARN: tunnel failed (${e instanceof Error ? e.message : String(e)}); falling back to ${url}`,
+        );
       }
     } else if (env.PREVIEW_TUNNEL) {
       log("Reusing the existing tunnel.");

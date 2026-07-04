@@ -44,7 +44,15 @@ previewRoutes.post("/:id/restart", async (c) => {
   const id = c.req.param("id");
   const preview = await prisma.previewEnvironment.findUnique({ where: { id } });
   if (!preview) return c.json({ error: "Preview not found" }, 404);
-  const jobId = await enqueueJob("restart", { previewId: id });
+  // ボディは任意。再起動でも破棄オプションを適用する(issue #58)。
+  const body = await c.req
+    .json<{ resetVolumes?: boolean; resetTunnel?: boolean }>()
+    .catch(() => ({}) as { resetVolumes?: boolean; resetTunnel?: boolean });
+  const jobId = await enqueueJob("restart", {
+    previewId: id,
+    resetVolumes: body.resetVolumes === true,
+    resetTunnel: body.resetTunnel === true,
+  });
   return c.json({ jobId, previewId: id });
 });
 

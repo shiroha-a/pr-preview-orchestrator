@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { ExternalLink, Loader2, Pause, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
 
-import type { StartPreviewOptions } from "../api/client";
+import type { RestartPreviewOptions, StartPreviewOptions } from "../api/client";
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
@@ -15,7 +15,7 @@ import BaseCard from "./ui/BaseCard.vue";
  */
 export interface PreviewActions {
   start: (opts?: StartPreviewOptions) => Promise<{ previewId: string }>;
-  restart: () => Promise<{ previewId: string }>;
+  restart: (opts?: RestartPreviewOptions) => Promise<{ previewId: string }>;
   destroy: () => Promise<void>;
   /** Stop containers without removing them (issue #32). */
   stop: () => Promise<unknown>;
@@ -52,6 +52,7 @@ const currentProfileName = computed(
 // 再ビルドオプション(チェックボックスで選択。#20/#41/#42を1つの再ビルドに集約)。
 // 全て「チェック=破棄/再作成」の極性に統一する(issue #50)。resetTunnel は
 // keepTunnel の反転で、既定(未チェック)ではトンネル(URL)を維持する。
+// resetVolumes/resetTunnel は「再起動」にも適用される(issue #58)。
 const rebuildOpts = ref({
   noCache: false,
   resetVolumes: false,
@@ -174,13 +175,13 @@ async function stop() {
   }
 }
 
-// ビルドせずにコンテナを再起動(トンネルは流用)。
-async function restart() {
+// ビルドせずにコンテナを再起動(既定ではボリューム・トンネルを維持)。
+async function restart(opts: RestartPreviewOptions = {}) {
   busy.value = true;
   actionError.value = null;
   logs.value = [];
   try {
-    const res = await props.actions.restart();
+    const res = await props.actions.restart(opts);
     previewId.value = res.previewId;
     status.value = "building";
     connect(res.previewId);
@@ -189,6 +190,15 @@ async function restart() {
   } finally {
     busy.value = false;
   }
+}
+
+// 「再起動」もボリューム破棄/トンネル破棄のチェックを適用する(issue #58)。
+// キャッシュ破棄はビルド時のみ意味を持つため再起動では対象外。
+function restartWithOpts() {
+  void restart({
+    resetVolumes: rebuildOpts.value.resetVolumes,
+    resetTunnel: rebuildOpts.value.resetTunnel,
+  });
 }
 
 onMounted(() => {
@@ -249,7 +259,7 @@ onUnmounted(disconnect);
           >
             <label
               class="inline-flex items-center gap-1"
-              title="ビルドキャッシュを破棄して再ビルド"
+              title="ビルドキャッシュを破棄する(再ビルドのみ有効)"
             >
               <input
                 v-model="rebuildOpts.noCache"
@@ -260,7 +270,7 @@ onUnmounted(disconnect);
             </label>
             <label
               class="inline-flex items-center gap-1"
-              title="ボリューム(DB等)を破棄して初期化してから再ビルド"
+              title="ボリューム(DB等)を破棄して初期化する(再ビルド/再起動どちらにも適用)"
             >
               <input
                 v-model="rebuildOpts.resetVolumes"
@@ -271,7 +281,7 @@ onUnmounted(disconnect);
             </label>
             <label
               class="inline-flex items-center gap-1"
-              title="トンネル(URL)を破棄して再作成する(URLが変わる)。未チェックなら維持"
+              title="トンネル(URL)を破棄して再作成する(URLが変わる)。未チェックなら維持(再ビルド/再起動どちらにも適用)"
             >
               <input
                 v-model="rebuildOpts.resetTunnel"
@@ -282,8 +292,8 @@ onUnmounted(disconnect);
             </label>
           </div>
 
-          <!-- 一時停止からの再開(issue #32) -->
-          <BaseButton v-if="status === 'paused'" size="sm" :disabled="busy" @click="restart">
+          <!-- 一時停止からの再開(issue #32)。チェックボックス非表示のためオプションなし -->
+          <BaseButton v-if="status === 'paused'" size="sm" :disabled="busy" @click="restart()">
             <Play class="h-4 w-4" />
             再開
           </BaseButton>
@@ -298,12 +308,14 @@ onUnmounted(disconnect);
             プレビューを起動
           </BaseButton>
 
+          <!-- ビルドせず再起動。ボリューム破棄/トンネル破棄のチェックを適用する(issue #58) -->
           <BaseButton
             v-if="status === 'running'"
             size="sm"
             variant="secondary"
             :disabled="busy"
-            @click="restart"
+            title="ビルドせずコンテナを再起動します。ボリューム破棄/トンネル破棄のチェックが適用されます"
+            @click="restartWithOpts"
           >
             <RotateCcw class="h-4 w-4" />
             再起動
