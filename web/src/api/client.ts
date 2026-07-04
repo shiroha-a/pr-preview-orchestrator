@@ -62,6 +62,12 @@ export interface StartPreviewOptions {
   profileId?: string | null;
 }
 
+/** Restart options: the discard checkboxes also apply to a plain restart (issue #58). */
+export interface RestartPreviewOptions {
+  resetVolumes?: boolean;
+  resetTunnel?: boolean;
+}
+
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
 
@@ -126,10 +132,10 @@ export const api = {
       { method: "POST", body: JSON.stringify(opts) },
     ),
 
-  restartPreview: (owner: string, name: string, number: number) =>
+  restartPreview: (owner: string, name: string, number: number, opts: RestartPreviewOptions = {}) =>
     request<{ jobId: string; previewId: string }>(
       `/repositories/${owner}/${name}/pulls/${number}/preview/restart`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify(opts) },
     ),
 
   destroyPreview: (owner: string, name: string, number: number) =>
@@ -167,8 +173,11 @@ export const api = {
 
   getPreviewById: (id: string) => request<{ preview: PreviewDTO | null }>(`/preview/${id}`),
 
-  restartPreviewById: (id: string) =>
-    request<{ jobId: string; previewId: string }>(`/preview/${id}/restart`, { method: "POST" }),
+  restartPreviewById: (id: string, opts: RestartPreviewOptions = {}) =>
+    request<{ jobId: string; previewId: string }>(`/preview/${id}/restart`, {
+      method: "POST",
+      body: JSON.stringify(opts),
+    }),
 
   stopPreviewById: (id: string) =>
     request<{ jobId: string; previewId: string }>(`/preview/${id}/stop`, { method: "POST" }),

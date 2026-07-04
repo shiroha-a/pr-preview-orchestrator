@@ -43,7 +43,10 @@ async function processJob(job: QueuedJob): Promise<void> {
     } else if (job.type === "destroy") {
       await destroyPreview(payload.previewId);
     } else if (job.type === "restart") {
-      await restartPreview(payload.previewId);
+      await restartPreview(payload.previewId, {
+        resetVolumes: payload.resetVolumes,
+        resetTunnel: payload.resetTunnel,
+      });
     } else if (job.type === "stop") {
       await stopPreview(payload.previewId);
     }

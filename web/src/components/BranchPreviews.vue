@@ -80,7 +80,7 @@ async function startBranch() {
 function branchActions(preview: PreviewDTO): PreviewActions {
   return {
     start: (opts) => api.startBranchPreview(props.owner, props.name, preview.branchRef ?? "", opts),
-    restart: () => api.restartPreviewById(preview.id),
+    restart: (opts) => api.restartPreviewById(preview.id, opts),
     destroy: () => api.destroyPreviewById(preview.id).then(() => undefined),
     stop: () => api.stopPreviewById(preview.id),
     refresh: async () => (await api.getPreviewById(preview.id)).preview,

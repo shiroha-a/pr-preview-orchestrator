@@ -11,6 +11,8 @@ export interface JobPayload {
   resetVolumes?: boolean;
   /** When true, keep the existing tunnel/URL instead of creating a new one (issue #42). */
   keepTunnel?: boolean;
+  /** Restart jobs: discard the tunnel and create a new one (URL changes; issue #58). */
+  resetTunnel?: boolean;
 }
 
 /** Enqueue a background job for the worker to process. */
