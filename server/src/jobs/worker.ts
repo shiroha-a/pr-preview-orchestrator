@@ -7,6 +7,7 @@ import {
   restartPreview,
   stopPreview,
 } from "../preview/service";
+import { importVolume } from "../preview/volumes";
 
 import type { JobPayload } from "./queue";
 
@@ -49,6 +50,11 @@ async function processJob(job: QueuedJob): Promise<void> {
       });
     } else if (job.type === "stop") {
       await stopPreview(payload.previewId);
+    } else if (job.type === "volume-import") {
+      if (!payload.volume || !payload.uploadPath) {
+        throw new Error("invalid payload: missing volume/uploadPath");
+      }
+      await importVolume(payload.previewId, payload.volume, payload.uploadPath);
     }
     await prisma.job.update({ where: { id: job.id }, data: { status: "done", error: null } });
   } catch (e) {

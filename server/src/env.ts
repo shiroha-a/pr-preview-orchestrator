@@ -48,6 +48,10 @@ const envSchema = z.object({
   // container, so the tunnel survives an app restart (issue #48).
   PREVIEW_TUNNEL_IMAGE: z.string().default("cloudflare/cloudflared:latest"),
 
+  // Docker image used as a throwaway helper to read/write preview volumes for
+  // export/import (issue #61). Needs sh, tar, gzip, find and du.
+  PREVIEW_VOLUME_HELPER_IMAGE: z.string().default("busybox:stable"),
+
   // Idle timeout (ms) for build commands: abort only after this long with no
   // output. Large builds keep running as long as they keep producing output.
   PREVIEW_BUILD_TIMEOUT_MS: z.coerce.number().int().default(600000),
