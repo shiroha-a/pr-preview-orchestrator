@@ -29,3 +29,14 @@ const html = computed(() => {
   <!-- eslint-disable-next-line vue/no-v-html -->
   <div v-if="html" class="prose prose-sm dark:prose-invert max-w-none break-words" v-html="html" />
 </template>
+
+<style scoped>
+/* 幅超過するテーブルはページを押し広げず、テーブル内で横スクロールさせる
+   (GitHubのmarkdown CSSと同じ方式)。v-html描画のため :deep で適用する。 */
+.prose :deep(table) {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+</style>
