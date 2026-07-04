@@ -1,6 +1,6 @@
 import { prisma } from "../db/client";
 
-export type JobType = "build" | "destroy" | "restart" | "stop";
+export type JobType = "build" | "destroy" | "restart" | "stop" | "volume-import";
 
 export interface JobPayload {
   /** The preview environment this job operates on (PR or branch, issue #25). */
@@ -13,6 +13,10 @@ export interface JobPayload {
   keepTunnel?: boolean;
   /** Restart jobs: discard the tunnel and create a new one (URL changes; issue #58). */
   resetTunnel?: boolean;
+  /** volume-import jobs: full docker volume name to import into (issue #61). */
+  volume?: string;
+  /** volume-import jobs: staging file holding the uploaded tar.gz (issue #61). */
+  uploadPath?: string;
 }
 
 /** Enqueue a background job for the worker to process. */

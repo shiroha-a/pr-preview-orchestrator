@@ -68,6 +68,16 @@ export interface RestartPreviewOptions {
   resetTunnel?: boolean;
 }
 
+/** A docker volume of a preview's compose project (issue #61). */
+export interface VolumeInfo {
+  name: string;
+  /** Approximate content size in MB, or null when unknown. */
+  sizeMb: number | null;
+}
+
+// CFのリクエストbodyサイズ上限(既定100MB)を安全に下回るチャンクで分割する(issue #61)。
+export const VOLUME_UPLOAD_CHUNK_SIZE = 32 * 1024 * 1024;
+
 export const api = {
   getConfig: () => request<AppConfig>("/config"),
 
@@ -181,6 +191,60 @@ export const api = {
 
   stopPreviewById: (id: string) =>
     request<{ jobId: string; previewId: string }>(`/preview/${id}/stop`, { method: "POST" }),
+
+  // --- Volume export/import (issue #61) ---
+
+  listPreviewVolumes: (id: string) => request<{ volumes: VolumeInfo[] }>(`/preview/${id}/volumes`),
+
+  /** Download URL for a volume's tar.gz export (used as a plain link href). */
+  volumeExportUrl: (id: string, volume: string) =>
+    `/api/preview/${id}/volumes/${encodeURIComponent(volume)}/export`,
+
+  /**
+   * Upload a tar.gz archive in chunks and enqueue the import job. Chunked to
+   * stay below Cloudflare's request body size limit (issue #61).
+   */
+  importPreviewVolume: async (
+    id: string,
+    volume: string,
+    file: Blob,
+    onProgress?: (sentBytes: number, totalBytes: number) => void,
+  ): Promise<{ jobId: string; previewId: string }> => {
+    const base = `/preview/${id}/volumes/${encodeURIComponent(volume)}/import`;
+    const totalChunks = Math.max(1, Math.ceil(file.size / VOLUME_UPLOAD_CHUNK_SIZE));
+    const { uploadId } = await request<{ uploadId: string }>(`${base}/start`, {
+      method: "POST",
+      body: JSON.stringify({ totalChunks, totalSize: file.size }),
+    });
+    try {
+      for (let index = 0; index < totalChunks; index++) {
+        const chunk = file.slice(
+          index * VOLUME_UPLOAD_CHUNK_SIZE,
+          Math.min((index + 1) * VOLUME_UPLOAD_CHUNK_SIZE, file.size),
+        );
+        // request() はJSONのContent-Type固定のため、バイナリは素のfetchで送る。
+        const res = await fetch(`/api${base}/${uploadId}/chunk/${index}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: chunk,
+        });
+        if (!res.ok) {
+          const data: unknown = await res.json().catch(() => ({}));
+          throw new Error(
+            (data as { error?: string }).error ?? `チャンクの送信に失敗しました (${res.status})`,
+          );
+        }
+        onProgress?.(Math.min((index + 1) * VOLUME_UPLOAD_CHUNK_SIZE, file.size), file.size);
+      }
+      return await request<{ jobId: string; previewId: string }>(`${base}/${uploadId}/finish`, {
+        method: "POST",
+      });
+    } catch (e) {
+      // 失敗時はサーバー側の一時ファイルを片付ける(掃除自体の失敗は無視)。
+      void request(`${base}/${uploadId}`, { method: "DELETE" }).catch(() => undefined);
+      throw e;
+    }
+  },
 
   destroyPreviewById: (id: string) =>
     request<{ jobId?: string; ok?: boolean }>(`/preview/${id}`, { method: "DELETE" }),

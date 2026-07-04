@@ -1,11 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { ExternalLink, Loader2, Pause, Play, RotateCcw, RotateCw, Square } from "lucide-vue-next";
+import {
+  ExternalLink,
+  HardDrive,
+  Loader2,
+  Pause,
+  Play,
+  RotateCcw,
+  RotateCw,
+  Square,
+} from "lucide-vue-next";
 
 import type { RestartPreviewOptions, StartPreviewOptions } from "../api/client";
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
+import VolumesModal from "./VolumesModal.vue";
 import BaseButton from "./ui/BaseButton.vue";
 import BaseCard from "./ui/BaseCard.vue";
 
@@ -40,6 +50,8 @@ const logs = ref<string[]>(
 );
 const actionError = ref<string | null>(null);
 const busy = ref(false);
+// ボリュームのエクスポート/インポートのモーダル(issue #61)。
+const showVolumes = ref(false);
 
 // 起動/再ビルドに使うプロファイル(""=既定の設定)。初期値は前回ビルド時の選択。
 const selectedProfileId = ref(props.initialPreview?.profileId ?? "");
@@ -332,6 +344,18 @@ onUnmounted(disconnect);
             <Pause class="h-4 w-4" />
             停止(保持)
           </BaseButton>
+          <!-- ボリュームのエクスポート/インポート(issue #61) -->
+          <BaseButton
+            v-if="previewId && status !== 'idle'"
+            size="sm"
+            variant="secondary"
+            :disabled="busy"
+            title="ボリューム(DB等)をtar.gzでエクスポート/インポートします"
+            @click="showVolumes = true"
+          >
+            <HardDrive class="h-4 w-4" />
+            ボリューム
+          </BaseButton>
           <BaseButton v-if="canStop" size="sm" variant="danger" :disabled="busy" @click="destroy">
             <Square class="h-4 w-4" />
             停止・破棄
@@ -381,5 +405,12 @@ onUnmounted(disconnect);
         <pre class="break-all whitespace-pre-wrap">{{ logs.join("\n") }}</pre>
       </div>
     </div>
+
+    <VolumesModal
+      v-if="showVolumes && previewId"
+      :preview-id="previewId"
+      :status="status"
+      @close="showVolumes = false"
+    />
   </BaseCard>
 </template>
