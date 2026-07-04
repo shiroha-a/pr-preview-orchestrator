@@ -48,8 +48,14 @@ export function startLogStream(opts: LogStreamOptions): void {
   };
   child.stdout.on("data", handle);
   child.stderr.on("data", handle);
-  child.on("close", () => streams.delete(opts.previewId));
-  child.on("error", () => streams.delete(opts.previewId));
+  // killされた旧プロセスのclose/errorは置き換え後に遅れて届く。無条件に削除すると
+  // 新しいストリームの登録が消えて孤児化し、再ビルドのたびにログが多重になる
+  // (issue #63)。登録が自分自身のときだけ削除する。
+  const cleanup = () => {
+    if (streams.get(opts.previewId) === child) streams.delete(opts.previewId);
+  };
+  child.on("close", cleanup);
+  child.on("error", cleanup);
 }
 
 /** Stop following a preview's container logs, if active. */
