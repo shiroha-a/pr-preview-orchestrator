@@ -75,7 +75,9 @@ onMounted(load);
           <div class="p-4 text-sm text-gray-500">稼働中のプレビュー環境はありません。</div>
         </BaseCard>
         <div v-else class="grid gap-3 sm:grid-cols-2">
-          <BaseCard v-for="p in activePreviews" :key="p.id">
+          <!-- min-w-0: truncate(nowrap)がグリッドの自動最小幅を押し広げ、
+               モバイルでカードが横幅を超えるのを防ぐ -->
+          <BaseCard v-for="p in activePreviews" :key="p.id" class="min-w-0">
             <div class="space-y-2 p-4">
               <div class="flex items-center justify-between gap-2">
                 <RouterLink
@@ -94,8 +96,8 @@ onMounted(load);
                 rel="noreferrer"
                 class="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
               >
-                <ExternalLink class="h-3 w-3" />
-                {{ p.url }}
+                <ExternalLink class="h-3 w-3 shrink-0" />
+                <span class="break-all">{{ p.url }}</span>
               </a>
             </div>
           </BaseCard>
@@ -124,6 +126,7 @@ onMounted(load);
             v-for="repo in repositories"
             :key="repo.id"
             :to="`/repos/${repo.owner}/${repo.name}`"
+            class="min-w-0"
           >
             <BaseCard class="transition-colors hover:border-blue-300 dark:hover:border-blue-700">
               <div class="flex items-center justify-between gap-2 p-4">
