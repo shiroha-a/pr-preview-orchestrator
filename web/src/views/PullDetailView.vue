@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
-import { ExternalLink, GitBranch, RefreshCw } from "lucide-vue-next";
+import { ExternalLink, FileDiff, GitBranch, RefreshCw } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { CommentDTO, PreviewDTO, PullRequestDTO, SettingsProfileDTO } from "../types";
 import CommentList from "../components/CommentList.vue";
-import DiffView from "../components/DiffView.vue";
 import DraftBadge from "../components/DraftBadge.vue";
 import MarkdownView from "../components/MarkdownView.vue";
 import PrStateBadge from "../components/PrStateBadge.vue";
@@ -35,8 +34,6 @@ const pr = ref<PullRequestDTO | null>(null);
 const preview = ref<PreviewDTO | null>(null);
 const loadError = ref<string | null>(null);
 
-const diff = ref("");
-const diffLoading = ref(true);
 const comments = ref<CommentDTO[]>([]);
 const commentsLoading = ref(true);
 const refreshing = ref(false);
@@ -69,17 +66,6 @@ async function loadMain(refresh = false) {
   }
 }
 
-async function loadDiff(refresh = false) {
-  diffLoading.value = true;
-  try {
-    diff.value = (await api.getPullDiff(owner, name, number, refresh)).diff;
-  } catch {
-    diff.value = "";
-  } finally {
-    diffLoading.value = false;
-  }
-}
-
 async function loadComments(refresh = false) {
   commentsLoading.value = true;
   try {
@@ -92,10 +78,11 @@ async function loadComments(refresh = false) {
 }
 
 // 「更新」ボタン: GitHub から取り直してキャッシュを更新する(issue #10)。
+// 差分は専用ページに分離したため対象外(差分ページ側の「更新」で行う。issue #65)。
 async function refreshAll() {
   refreshing.value = true;
   try {
-    await Promise.all([loadMain(true), loadDiff(true), loadComments(true)]);
+    await Promise.all([loadMain(true), loadComments(true)]);
   } finally {
     refreshing.value = false;
   }
@@ -104,7 +91,6 @@ async function refreshAll() {
 onMounted(() => {
   // 通常はキャッシュ優先で取得(初回はサーバー側で取得・保存される)。
   void loadMain();
-  void loadDiff();
   void loadComments();
   void loadProfiles();
 });
@@ -181,14 +167,16 @@ onMounted(() => {
         </BaseCard>
       </section>
 
+      <!-- 変更差分はDOMが重くログ閲覧の妨げになるため専用ページに分離(issue #65) -->
       <section class="space-y-2">
         <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">変更差分</h2>
-        <BaseCard>
-          <div class="p-4">
-            <p v-if="diffLoading" class="text-sm text-gray-500">差分を読み込み中...</p>
-            <DiffView v-else :diff="diff" />
-          </div>
-        </BaseCard>
+        <RouterLink
+          :to="`/repos/${owner}/${name}/pull/${number}/diff`"
+          class="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          <FileDiff class="h-4 w-4" />
+          変更差分を表示
+        </RouterLink>
       </section>
 
       <section class="space-y-2">
