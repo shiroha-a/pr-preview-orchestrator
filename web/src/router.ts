@@ -18,6 +18,12 @@ const routes: RouteRecordRaw[] = [
     name: "pull",
     component: () => import("./views/PullDetailView.vue"),
   },
+  // 変更差分は重いDOMになるため専用ページに分離する(issue #65)。
+  {
+    path: "/repos/:owner/:name/pull/:number/diff",
+    name: "pull-diff",
+    component: () => import("./views/PullDiffView.vue"),
+  },
 ];
 
 export const router = createRouter({
