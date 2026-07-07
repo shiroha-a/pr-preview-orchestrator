@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Trash2 } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { SystemMetrics } from "../types";
+import type { DockerDfRow, DockerDiskUsage, SystemMetrics } from "../types";
 import BaseCard from "./ui/BaseCard.vue";
 
 const metrics = ref<SystemMetrics | null>(null);
@@ -44,6 +44,34 @@ async function load() {
   }
 }
 
+// --- Dockerのディスク使用状況(docker system df 相当。issue #68) ---
+
+const df = ref<DockerDiskUsage | null>(null);
+let dfTimer: ReturnType<typeof setInterval> | undefined;
+
+const TYPE_LABELS: Record<DockerDfRow["type"], string> = {
+  images: "イメージ",
+  containers: "コンテナ",
+  volumes: "ボリューム",
+  buildCache: "ビルドキャッシュ",
+};
+
+// docker CLI 表記(10進単位)に合わせる。メモリ系の fmtBytes(2進)とは意図的に別。
+function fmtSize(bytes: number): string {
+  if (bytes >= 1000 ** 3) return `${(bytes / 1000 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1000 ** 2) return `${(bytes / 1000 ** 2).toFixed(0)} MB`;
+  if (bytes >= 1000) return `${(bytes / 1000).toFixed(0)} kB`;
+  return `${bytes} B`;
+}
+
+async function loadDf(refresh = false) {
+  try {
+    df.value = await api.getDockerDf(refresh);
+  } catch {
+    // 一時的なエラーは無視(次のポーリングで回復)
+  }
+}
+
 const pruning = ref(false);
 const pruneResult = ref<string | null>(null);
 const pruneError = ref<string | null>(null);
@@ -60,6 +88,8 @@ async function pruneCache() {
     const summary = output.split("\n").filter(Boolean).pop();
     pruneResult.value = summary ?? "ビルドキャッシュを削除しました";
     await load();
+    // 削除結果をDocker使用状況にも反映する。
+    await loadDf(true);
   } catch (e) {
     pruneError.value = e instanceof Error ? e.message : "削除に失敗しました";
   } finally {
@@ -71,9 +101,13 @@ onMounted(() => {
   void load();
   // 5秒ごとに更新(リアルタイム表示)
   timer = setInterval(load, 5000);
+  // docker system df は重いので30秒間隔で取得する(サーバー側でも15秒キャッシュ)。
+  void loadDf();
+  dfTimer = setInterval(() => void loadDf(), 30000);
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
+  if (dfTimer) clearInterval(dfTimer);
 });
 </script>
 
@@ -185,6 +219,34 @@ onUnmounted(() => {
           <div class="h-4 w-1/3 rounded bg-gray-100 dark:bg-gray-800"></div>
         </div>
       </template>
+
+      <!-- Dockerのディスク使用状況(docker system df 相当。issue #68)。 -->
+      <details class="border-t border-gray-100 pt-2 dark:border-gray-800">
+        <summary class="cursor-pointer text-xs font-medium text-gray-500 select-none">
+          Docker使用状況
+        </summary>
+        <div class="mt-2">
+          <p v-if="!df" class="text-xs text-gray-400">読み込み中...</p>
+          <table v-else class="w-full text-xs">
+            <thead>
+              <tr class="text-gray-400">
+                <th class="pb-1 text-left font-medium">種類</th>
+                <th class="pb-1 text-right font-medium">件数(使用中)</th>
+                <th class="pb-1 text-right font-medium">サイズ</th>
+                <th class="pb-1 text-right font-medium">回収可能</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in df.rows" :key="row.type" class="text-gray-600 dark:text-gray-300">
+                <td class="py-0.5">{{ TYPE_LABELS[row.type] }}</td>
+                <td class="py-0.5 text-right">{{ row.totalCount }} ({{ row.active }})</td>
+                <td class="py-0.5 text-right">{{ fmtSize(row.sizeBytes) }}</td>
+                <td class="py-0.5 text-right">{{ fmtSize(row.reclaimableBytes) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
 
       <!-- Dockerビルドキャッシュの手動削除(issue #20)。 -->
       <div
