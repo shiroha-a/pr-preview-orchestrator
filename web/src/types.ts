@@ -165,6 +165,21 @@ export interface DockerDiskUsage {
   fetchedAt: string;
 }
 
+export type CleanupKind = "builder-prune";
+
+/** Server-side cleanup state; survives page reloads (issue #70). */
+export interface CleanupStatus {
+  running: { kind: CleanupKind; startedAt: string } | null;
+  last: {
+    kind: CleanupKind;
+    ok: boolean;
+    summary: string;
+    error: string | null;
+    startedAt: string;
+    finishedAt: string;
+  } | null;
+}
+
 export interface AppConfig {
   tokenSet: boolean;
   webhookSecretSet: boolean;

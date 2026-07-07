@@ -3,7 +3,13 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Trash2 } from "lucide-vue-next";
 
 import { api } from "../api/client";
-import type { DockerDfRow, DockerDiskUsage, SystemMetrics } from "../types";
+import type {
+  CleanupKind,
+  CleanupStatus,
+  DockerDfRow,
+  DockerDiskUsage,
+  SystemMetrics,
+} from "../types";
 import BaseCard from "./ui/BaseCard.vue";
 
 const metrics = ref<SystemMetrics | null>(null);
@@ -72,29 +78,69 @@ async function loadDf(refresh = false) {
   }
 }
 
-const pruning = ref(false);
-const pruneResult = ref<string | null>(null);
-const pruneError = ref<string | null>(null);
+// --- クリーンアップ(issue #70) ---
+// 実行状態はサーバー側に持たせ、ここでは表示とポーリングのみを行う。
+// リロードしてもマウント時の取得で「削除中」表示が復元される(issue #70)。
 
-// Dockerビルドキャッシュを全削除する(ホスト全体・全プロジェクト共通。issue #20)。
-async function pruneCache() {
-  if (!confirm("Dockerのビルドキャッシュを削除しますか?(ホスト全体に影響します)")) return;
-  pruning.value = true;
-  pruneResult.value = null;
-  pruneError.value = null;
-  try {
-    const { output } = await api.pruneBuilderCache();
-    // 出力末尾の "Total reclaimed space: ..." 行を要約として表示する。
-    const summary = output.split("\n").filter(Boolean).pop();
-    pruneResult.value = summary ?? "ビルドキャッシュを削除しました";
-    await load();
-    // 削除結果をDocker使用状況にも反映する。
-    await loadDf(true);
-  } catch (e) {
-    pruneError.value = e instanceof Error ? e.message : "削除に失敗しました";
-  } finally {
-    pruning.value = false;
+const cleanup = ref<CleanupStatus | null>(null);
+const cleanupStartError = ref<string | null>(null);
+let cleanupTimer: ReturnType<typeof setInterval> | undefined;
+
+const cleanupRunning = computed(() => cleanup.value?.running ?? null);
+const lastCleanup = computed(() => cleanup.value?.last ?? null);
+
+const KIND_LABELS: Record<CleanupKind, string> = {
+  "builder-prune": "ビルドキャッシュ削除",
+};
+
+function fmtTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
+function ensureCleanupPolling() {
+  if (!cleanupTimer) cleanupTimer = setInterval(() => void pollCleanup(), 2500);
+}
+function stopCleanupPolling() {
+  if (cleanupTimer) {
+    clearInterval(cleanupTimer);
+    cleanupTimer = undefined;
   }
+}
+
+async function pollCleanup() {
+  try {
+    const wasRunning = cleanupRunning.value !== null;
+    cleanup.value = await api.getDockerCleanup();
+    if (cleanupRunning.value) {
+      ensureCleanupPolling();
+    } else {
+      stopCleanupPolling();
+      // 完了直後は削除結果をディスク使用状況へ反映する。
+      if (wasRunning) {
+        void loadDf(true);
+        void load();
+      }
+    }
+  } catch {
+    // 一時的なエラーは無視(次のポーリングで回復)
+  }
+}
+
+async function startCleanup(startRequest: () => Promise<CleanupStatus>) {
+  cleanupStartError.value = null;
+  try {
+    cleanup.value = await startRequest();
+    ensureCleanupPolling();
+  } catch (e) {
+    cleanupStartError.value = e instanceof Error ? e.message : "開始に失敗しました";
+    // 409(別のクリーンアップ実行中)でも表示をサーバー状態と同期する。
+    void pollCleanup();
+  }
+}
+
+function runBuilderPrune() {
+  if (!confirm("Dockerのビルドキャッシュを削除しますか?(ホスト全体に影響します)")) return;
+  void startCleanup(() => api.startBuilderPrune());
 }
 
 onMounted(() => {
@@ -104,10 +150,13 @@ onMounted(() => {
   // docker system df は重いので30秒間隔で取得する(サーバー側でも15秒キャッシュ)。
   void loadDf();
   dfTimer = setInterval(() => void loadDf(), 30000);
+  // 実行中クリーンアップの復元(issue #70)。
+  void pollCleanup();
 });
 onUnmounted(() => {
   if (timer) clearInterval(timer);
   if (dfTimer) clearInterval(dfTimer);
+  stopCleanupPolling();
 });
 </script>
 
@@ -248,20 +297,27 @@ onUnmounted(() => {
         </div>
       </details>
 
-      <!-- Dockerビルドキャッシュの手動削除(issue #20)。 -->
-      <div
-        class="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-2 dark:border-gray-800"
-      >
-        <button
-          class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-          :disabled="pruning"
-          @click="pruneCache"
+      <!-- クリーンアップ操作。実行状態はサーバー側にあり、リロードしても
+           「削除中...」表示と直近の結果が復元される(issue #70)。 -->
+      <div class="space-y-2 border-t border-gray-100 pt-2 dark:border-gray-800">
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            :disabled="cleanupRunning !== null"
+            @click="runBuilderPrune"
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+            {{ cleanupRunning?.kind === "builder-prune" ? "削除中..." : "ビルドキャッシュを削除" }}
+          </button>
+        </div>
+        <p v-if="cleanupStartError" class="text-xs text-red-600">{{ cleanupStartError }}</p>
+        <p
+          v-else-if="lastCleanup"
+          :class="['text-xs', lastCleanup.ok ? 'text-green-600' : 'text-red-600']"
         >
-          <Trash2 class="h-3.5 w-3.5" />
-          {{ pruning ? "削除中..." : "ビルドキャッシュを削除" }}
-        </button>
-        <span v-if="pruneResult" class="text-xs text-green-600">{{ pruneResult }}</span>
-        <span v-if="pruneError" class="text-xs text-red-600">{{ pruneError }}</span>
+          {{ KIND_LABELS[lastCleanup.kind] }} ({{ fmtTime(lastCleanup.finishedAt) }}):
+          {{ lastCleanup.ok ? lastCleanup.summary : lastCleanup.error }}
+        </p>
       </div>
     </div>
   </BaseCard>

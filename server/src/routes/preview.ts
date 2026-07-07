@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { prisma } from "../db/client";
 import { enqueueJob } from "../jobs/queue";
 import { subscribePreview } from "../preview/events";
-import { cancelBuild, pruneBuilderCache } from "../preview/service";
+import { cancelBuild } from "../preview/service";
 import {
   appendUploadChunk,
   createUploadSession,
@@ -31,19 +31,6 @@ previewRoutes.get("/", async (c) => {
     orderBy: { updatedAt: "desc" },
   });
   return c.json({ previews });
-});
-
-/** Prune the global Docker build cache to reclaim disk space (issue #20). */
-previewRoutes.post("/builder-prune", async (c) => {
-  try {
-    const output = await pruneBuilderCache();
-    return c.json({ output });
-  } catch (e) {
-    return c.json(
-      { error: e instanceof Error ? e.message : "ビルドキャッシュの削除に失敗しました" },
-      500,
-    );
-  }
 });
 
 /** Fetch a single preview environment by id (PR or branch). */

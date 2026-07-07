@@ -863,19 +863,3 @@ export async function reattachRunningPreviews(): Promise<void> {
     }
   }
 }
-
-/**
- * Prune the global Docker build cache via `docker builder prune -f`.
- *
- * This affects the whole Docker host, not a single preview environment. Returns
- * the command output, whose last line is the reclaimed-space summary (issue #20).
- */
-export async function pruneBuilderCache(): Promise<string> {
-  const lines: string[] = [];
-  const code = await runCommand("docker", ["builder", "prune", "-f"], {
-    onLine: (line) => lines.push(line),
-    timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-  });
-  if (code !== 0) throw new Error(`docker builder prune exited with code ${code}`);
-  return lines.join("\n");
-}

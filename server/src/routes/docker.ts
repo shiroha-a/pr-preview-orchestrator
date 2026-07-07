@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 
+import { getCleanupStatus, startBuilderPrune } from "../docker/cleanup";
 import { getDockerDiskUsage } from "../docker/df";
 
 export const dockerRoutes = new Hono();
@@ -14,4 +15,15 @@ dockerRoutes.get("/df", async (c) => {
       500,
     );
   }
+});
+
+/** Current/last cleanup state, kept server-side so reloads recover it (issue #70). */
+dockerRoutes.get("/cleanup", (c) => c.json(getCleanupStatus()));
+
+/** Start an asynchronous build-cache prune (issue #70). */
+dockerRoutes.post("/cleanup/builder-prune", (c) => {
+  if (!startBuilderPrune()) {
+    return c.json({ error: "別のクリーンアップが実行中です", ...getCleanupStatus() }, 409);
+  }
+  return c.json(getCleanupStatus(), 202);
 });
