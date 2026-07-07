@@ -73,12 +73,15 @@ function lastLine(output: string): string {
  * Prune the Docker build cache asynchronously. The HTTP handler only starts
  * the task; progress and the result are read back via getCleanupStatus so a
  * page reload does not lose them (issue #70).
+ *
+ * With `all`, recently-used cache is removed too (`docker builder prune -a`);
+ * the default prune keeps it and the disk fills up under frequent preview
+ * builds (issue #69).
  */
-export function startBuilderPrune(): boolean {
+export function startBuilderPrune(opts: { all: boolean }): boolean {
   return start("builder-prune", async () => {
-    const { code, output } = await runDocker(["builder", "prune", "-f"], {
-      idleTimeoutMs: CLEANUP_IDLE_TIMEOUT_MS,
-    });
+    const args = ["builder", "prune", "-f", ...(opts.all ? ["-a"] : [])];
+    const { code, output } = await runDocker(args, { idleTimeoutMs: CLEANUP_IDLE_TIMEOUT_MS });
     if (code !== 0) throw new Error(`docker builder prune failed: ${lastLine(output)}`);
     return lastLine(output) || "ビルドキャッシュを削除しました";
   });

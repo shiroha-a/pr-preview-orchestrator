@@ -84,6 +84,8 @@ async function loadDf(refresh = false) {
 
 const cleanup = ref<CleanupStatus | null>(null);
 const cleanupStartError = ref<string | null>(null);
+// 既定は全削除(-a)。最近使用したキャッシュも残ると容量が枯渇するため(issue #69)。
+const pruneAll = ref(true);
 let cleanupTimer: ReturnType<typeof setInterval> | undefined;
 
 const cleanupRunning = computed(() => cleanup.value?.running ?? null);
@@ -139,8 +141,9 @@ async function startCleanup(startRequest: () => Promise<CleanupStatus>) {
 }
 
 function runBuilderPrune() {
-  if (!confirm("Dockerのビルドキャッシュを削除しますか?(ホスト全体に影響します)")) return;
-  void startCleanup(() => api.startBuilderPrune());
+  const scope = pruneAll.value ? "すべて(最近使用分も含む)" : "未使用分のみ";
+  if (!confirm(`Dockerのビルドキャッシュを${scope}削除しますか?(ホスト全体に影響します)`)) return;
+  void startCleanup(() => api.startBuilderPrune(pruneAll.value));
 }
 
 onMounted(() => {
@@ -309,6 +312,10 @@ onUnmounted(() => {
             <Trash2 class="h-3.5 w-3.5" />
             {{ cleanupRunning?.kind === "builder-prune" ? "削除中..." : "ビルドキャッシュを削除" }}
           </button>
+          <label class="flex items-center gap-1 text-xs text-gray-500 select-none">
+            <input v-model="pruneAll" type="checkbox" :disabled="cleanupRunning !== null" />
+            最近使用分も含めて全削除
+          </label>
         </div>
         <p v-if="cleanupStartError" class="text-xs text-red-600">{{ cleanupStartError }}</p>
         <p

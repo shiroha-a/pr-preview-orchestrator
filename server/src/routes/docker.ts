@@ -20,9 +20,11 @@ dockerRoutes.get("/df", async (c) => {
 /** Current/last cleanup state, kept server-side so reloads recover it (issue #70). */
 dockerRoutes.get("/cleanup", (c) => c.json(getCleanupStatus()));
 
-/** Start an asynchronous build-cache prune (issue #70). */
-dockerRoutes.post("/cleanup/builder-prune", (c) => {
-  if (!startBuilderPrune()) {
+/** Start an asynchronous build-cache prune; `all` drops recently-used cache too (issue #69). */
+dockerRoutes.post("/cleanup/builder-prune", async (c) => {
+  const body = await c.req.json<{ all?: boolean }>().catch(() => ({}) as { all?: boolean });
+  // 既定は全削除(-a): 未使用分だけでは短期間の連続ビルドで容量が枯渇する(issue #69)。
+  if (!startBuilderPrune({ all: body.all !== false })) {
     return c.json({ error: "別のクリーンアップが実行中です", ...getCleanupStatus() }, 409);
   }
   return c.json(getCleanupStatus(), 202);
