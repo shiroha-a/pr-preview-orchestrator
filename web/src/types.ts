@@ -151,6 +151,20 @@ export interface SystemMetrics {
   previews: PreviewUsage[];
 }
 
+/** One row of the `docker system df` equivalent (issue #68). */
+export interface DockerDfRow {
+  type: "images" | "containers" | "volumes" | "buildCache";
+  totalCount: number;
+  active: number;
+  sizeBytes: number;
+  reclaimableBytes: number;
+}
+
+export interface DockerDiskUsage {
+  rows: DockerDfRow[];
+  fetchedAt: string;
+}
+
 export interface AppConfig {
   tokenSet: boolean;
   webhookSecretSet: boolean;

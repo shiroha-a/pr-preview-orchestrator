@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   CommentDTO,
+  DockerDiskUsage,
   OverlayFile,
   PreviewDTO,
   PreviewListItem,
@@ -82,6 +83,10 @@ export const api = {
   getConfig: () => request<AppConfig>("/config"),
 
   getMetrics: () => request<SystemMetrics>("/metrics"),
+
+  // Dockerのディスク使用状況(docker system df 相当。issue #68)。
+  getDockerDf: (refresh = false) =>
+    request<DockerDiskUsage>(`/docker/df${refresh ? "?refresh=1" : ""}`),
 
   getPreviews: () => request<{ previews: PreviewListItem[] }>("/preview"),
 

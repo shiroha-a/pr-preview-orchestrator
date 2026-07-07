@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 
 import { dbBasicAuth, getCachedUserCount } from "./auth/middleware";
 import { env, hasGitHubToken } from "./env";
+import { dockerRoutes } from "./routes/docker";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
 import { repositoriesRoutes } from "./routes/repositories";
@@ -46,6 +47,7 @@ export function createApp() {
   app.route("/api/repositories", repositoriesRoutes);
   app.route("/api/preview", previewRoutes);
   app.route("/api/metrics", metricsRoutes);
+  app.route("/api/docker", dockerRoutes);
   app.route("/api/users", createUsersRoutes());
 
   // Serve the built web SPA in production (only when web/dist exists, so the
