@@ -100,6 +100,8 @@ export const api = {
       body: JSON.stringify({ all }),
     }),
 
+  startImagePrune: () => request<CleanupStatus>("/docker/cleanup/images", { method: "POST" }),
+
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
   addRepository: (owner: string, name: string) =>

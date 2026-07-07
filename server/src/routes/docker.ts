@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { getCleanupStatus, startBuilderPrune } from "../docker/cleanup";
+import { getCleanupStatus, startBuilderPrune, startImagePrune } from "../docker/cleanup";
 import { getDockerDiskUsage } from "../docker/df";
 
 export const dockerRoutes = new Hono();
@@ -25,6 +25,14 @@ dockerRoutes.post("/cleanup/builder-prune", async (c) => {
   const body = await c.req.json<{ all?: boolean }>().catch(() => ({}) as { all?: boolean });
   // 既定は全削除(-a): 未使用分だけでは短期間の連続ビルドで容量が枯渇する(issue #69)。
   if (!startBuilderPrune({ all: body.all !== false })) {
+    return c.json({ error: "別のクリーンアップが実行中です", ...getCleanupStatus() }, 409);
+  }
+  return c.json(getCleanupStatus(), 202);
+});
+
+/** Start orphaned preview image + dangling image removal (issue #67). */
+dockerRoutes.post("/cleanup/images", (c) => {
+  if (!startImagePrune()) {
     return c.json({ error: "別のクリーンアップが実行中です", ...getCleanupStatus() }, 409);
   }
   return c.json(getCleanupStatus(), 202);
