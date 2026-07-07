@@ -93,6 +93,7 @@ const lastCleanup = computed(() => cleanup.value?.last ?? null);
 
 const KIND_LABELS: Record<CleanupKind, string> = {
   "builder-prune": "ビルドキャッシュ削除",
+  "image-prune": "不要イメージ削除",
 };
 
 function fmtTime(iso: string): string {
@@ -144,6 +145,16 @@ function runBuilderPrune() {
   const scope = pruneAll.value ? "すべて(最近使用分も含む)" : "未使用分のみ";
   if (!confirm(`Dockerのビルドキャッシュを${scope}削除しますか?(ホスト全体に影響します)`)) return;
   void startCleanup(() => api.startBuilderPrune(pruneAll.value));
+}
+
+function runImagePrune() {
+  if (
+    !confirm(
+      "破棄済みプレビューのイメージとdanglingイメージを削除しますか?(danglingはホスト全体が対象です)",
+    )
+  )
+    return;
+  void startCleanup(() => api.startImagePrune());
 }
 
 onMounted(() => {
@@ -316,6 +327,17 @@ onUnmounted(() => {
             <input v-model="pruneAll" type="checkbox" :disabled="cleanupRunning !== null" />
             最近使用分も含めて全削除
           </label>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            class="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            :disabled="cleanupRunning !== null"
+            @click="runImagePrune"
+          >
+            <Trash2 class="h-3.5 w-3.5" />
+            {{ cleanupRunning?.kind === "image-prune" ? "削除中..." : "不要イメージを削除" }}
+          </button>
+          <span class="text-xs text-gray-400">破棄済みプレビュー+dangling</span>
         </div>
         <p v-if="cleanupStartError" class="text-xs text-red-600">{{ cleanupStartError }}</p>
         <p

@@ -165,7 +165,7 @@ export interface DockerDiskUsage {
   fetchedAt: string;
 }
 
-export type CleanupKind = "builder-prune";
+export type CleanupKind = "builder-prune" | "image-prune";
 
 /** Server-side cleanup state; survives page reloads (issue #70). */
 export interface CleanupStatus {

@@ -1,7 +1,14 @@
+import { prisma } from "../db/client";
 import { invalidateDockerDiskUsageCache } from "./df";
+import {
+  imageRemovalRefs,
+  IMAGE_INSPECT_FORMAT,
+  parseImageInspectLines,
+  selectOrphanImages,
+} from "./images";
 import { runDocker } from "./run";
 
-export type CleanupKind = "builder-prune";
+export type CleanupKind = "builder-prune" | "image-prune";
 
 /** Global cleanup state; queryable so the UI survives page reloads (issue #70). */
 export interface CleanupStatus {
@@ -84,5 +91,72 @@ export function startBuilderPrune(opts: { all: boolean }): boolean {
     const { code, output } = await runDocker(args, { idleTimeoutMs: CLEANUP_IDLE_TIMEOUT_MS });
     if (code !== 0) throw new Error(`docker builder prune failed: ${lastLine(output)}`);
     return lastLine(output) || "ビルドキャッシュを削除しました";
+  });
+}
+
+/**
+ * Remove images left behind by destroyed previews, then prune dangling images
+ * (issue #67). Only images labeled with a `preview-*` compose project that has
+ * no active preview are targeted, so other compose projects on the host are
+ * untouched. Uses non-forced `docker rmi`, so anything still referenced by a
+ * container is refused by docker and skipped.
+ */
+export function startImagePrune(): boolean {
+  return start("image-prune", async () => {
+    const ls = await runDocker(["images", "-aq", "--no-trunc"]);
+    if (ls.code !== 0) throw new Error(`docker images failed: ${lastLine(ls.output)}`);
+    const ids = [
+      ...new Set(
+        ls.output
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    let removed = 0;
+    let skipped = 0;
+    if (ids.length > 0) {
+      // 全イメージのid/composeプロジェクトラベル/タグを一括inspectする。一覧取得後に
+      // 消えたidのエラー行は parseImageInspectLines が読み飛ばす。
+      const inspect = await runDocker([
+        "image",
+        "inspect",
+        "--format",
+        IMAGE_INSPECT_FORMAT,
+        ...ids,
+      ]);
+      const images = parseImageInspectLines(inspect.output.split(/\r?\n/));
+
+      // 稼働中・一時停止中・ビルド中のプレビューのイメージは再開に必要なので残す。
+      // stopped(破棄済み)/idle/failed は再ビルドで作り直せるため削除してよい。
+      const activeRows = await prisma.previewEnvironment.findMany({
+        where: { status: { notIn: ["stopped", "idle", "failed"] } },
+        select: { composeProject: true },
+      });
+      const orphans = selectOrphanImages(
+        images,
+        activeRows.map((r) => r.composeProject),
+      );
+
+      for (const img of orphans) {
+        const rmi = await runDocker(["rmi", ...imageRemovalRefs(img)], {
+          idleTimeoutMs: CLEANUP_IDLE_TIMEOUT_MS,
+        });
+        if (rmi.code === 0) removed += 1;
+        else skipped += 1;
+      }
+    }
+
+    // 再ビルドで置き換えられた無タグの残骸(dangling)をホスト全体で削除する。
+    const prune = await runDocker(["image", "prune", "-f"], {
+      idleTimeoutMs: CLEANUP_IDLE_TIMEOUT_MS,
+    });
+    if (prune.code !== 0) throw new Error(`docker image prune failed: ${lastLine(prune.output)}`);
+
+    const parts = [`プレビューイメージ${removed}件を削除`];
+    if (skipped > 0) parts.push(`${skipped}件は使用中のためスキップ`);
+    parts.push(`dangling: ${lastLine(prune.output) || "削除なし"}`);
+    return parts.join(" / ");
   });
 }

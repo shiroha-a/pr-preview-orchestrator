@@ -559,6 +559,9 @@ export async function destroyPreview(previewId: string): Promise<void> {
   // dockerデーモン無応答でジョブが固着しないようアイドルタイムアウトを設ける(issue #33)。
   const timeoutMs = env.PREVIEW_BUILD_TIMEOUT_MS;
   try {
+    // --rmi local: compose既定名(<project>-<service>)でビルドされたイメージを破棄時に
+    // 一緒に削除する(issue #67)。composeファイルの image: で名前指定されたイメージは
+    // 他プレビューと共有されうるため対象外(local はカスタムタグ無しのみ削除する)。
     if (existsSync(dir)) {
       await runCommand(
         "docker",
@@ -572,13 +575,24 @@ export async function destroyPreview(previewId: string): Promise<void> {
           "down",
           "-v",
           "--remove-orphans",
+          "--rmi",
+          "local",
         ],
         { cwd: dir, onLine: log, timeoutMs },
       );
     } else {
       await runCommand(
         "docker",
-        ["compose", "-p", preview.composeProject, "down", "-v", "--remove-orphans"],
+        [
+          "compose",
+          "-p",
+          preview.composeProject,
+          "down",
+          "-v",
+          "--remove-orphans",
+          "--rmi",
+          "local",
+        ],
         { onLine: log, timeoutMs },
       );
     }
