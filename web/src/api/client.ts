@@ -94,8 +94,11 @@ export const api = {
   // クリーンアップはサーバー側で非同期実行され、状態はGETで復元できる(issue #70)。
   getDockerCleanup: () => request<CleanupStatus>("/docker/cleanup"),
 
-  startBuilderPrune: () =>
-    request<CleanupStatus>("/docker/cleanup/builder-prune", { method: "POST" }),
+  startBuilderPrune: (all: boolean) =>
+    request<CleanupStatus>("/docker/cleanup/builder-prune", {
+      method: "POST",
+      body: JSON.stringify({ all }),
+    }),
 
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
