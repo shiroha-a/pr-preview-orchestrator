@@ -1,5 +1,6 @@
 import type {
   AppConfig,
+  CleanupStatus,
   CommentDTO,
   DockerDiskUsage,
   OverlayFile,
@@ -90,8 +91,11 @@ export const api = {
 
   getPreviews: () => request<{ previews: PreviewListItem[] }>("/preview"),
 
-  pruneBuilderCache: () =>
-    request<{ output: string }>("/preview/builder-prune", { method: "POST" }),
+  // クリーンアップはサーバー側で非同期実行され、状態はGETで復元できる(issue #70)。
+  getDockerCleanup: () => request<CleanupStatus>("/docker/cleanup"),
+
+  startBuilderPrune: () =>
+    request<CleanupStatus>("/docker/cleanup/builder-prune", { method: "POST" }),
 
   getRepositories: () => request<{ repositories: RepositoryDTO[] }>("/repositories"),
 
