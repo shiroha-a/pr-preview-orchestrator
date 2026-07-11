@@ -6,7 +6,7 @@ import { expandTemplate } from "./rewrite";
 export interface OverlayFile {
   /** Destination path, relative to the repository root (the clone directory). */
   path: string;
-  /** File content; supports {{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}}. */
+  /** File content; supports template variables ({{PREVIEW_URL}}, {{PR_TITLE}}, ...). */
   content: string;
 }
 
@@ -59,7 +59,8 @@ export function parseProfileOverlayEntries(json: string | null | undefined): Pro
  *
  * This lets a test-specific compose file, config (e.g. default.yml), or volume
  * setup live outside the target repository and be injected at build time.
- * Content supports {{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}}. Parent
+ * Content supports {{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}} plus
+ * {{PR_NUMBER}} / {{PR_TITLE}} / {{PROFILE_NAME}} (issue #75). Parent
  * directories are created and existing files overwritten. Paths that escape the
  * workspace (e.g. via "..") are skipped.
  */

@@ -66,7 +66,7 @@ function branchWorkspaceSlug(owner: string, name: string, branch: string): strin
 }
 
 /** A preview row with its target relations loaded (PR and/or repository). */
-type PreviewWithTarget = Prisma.PreviewEnvironmentGetPayload<{
+export type PreviewWithTarget = Prisma.PreviewEnvironmentGetPayload<{
   include: {
     pullRequest: { include: { repository: true } };
     repository: true;
@@ -89,10 +89,20 @@ interface BuildTarget {
   label: string;
   /** Known commit SHA up front (PR head); null for branches (resolved after clone). */
   knownSha: string | null;
+  /**
+   * Static template variables known before the build starts (issue #75):
+   * PR_NUMBER / PR_TITLE (branch previews fall back to the branch name) and
+   * PROFILE_NAME (empty string when using the repository defaults). Dynamic
+   * variables (PREVIEW_URL etc.) are added during the build.
+   */
+  templateVars: Record<string, string>;
 }
 
-/** Derive the build parameters for a preview from its kind (PR or branch). */
-function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
+/** Derive the build parameters for a preview from its kind (PR or branch). Exported for tests. */
+export function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
+  // ブランチプレビューにはPRタイトル・番号が無いため、どちらもブランチ名で代用する(issue #75)。
+  const profileName = preview.profile?.name ?? "";
+
   if (preview.kind === "branch") {
     const repo = preview.repository;
     const branch = preview.branchRef;
@@ -109,6 +119,7 @@ function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
       dir: workspaceDir(branchWorkspaceSlug(repo.owner, repo.name, branch)),
       label: `branch ${branch}`,
       knownSha: null,
+      templateVars: { PR_NUMBER: branch, PR_TITLE: branch, PROFILE_NAME: profileName },
     };
   }
 
@@ -125,6 +136,7 @@ function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
     dir: workspaceDir(prWorkspaceSlug(repo.owner, repo.name, pr.number)),
     label: `PR #${pr.number}`,
     knownSha: pr.headSha,
+    templateVars: { PR_NUMBER: String(pr.number), PR_TITLE: pr.title, PROFILE_NAME: profileName },
   };
 }
 
@@ -428,6 +440,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     }
 
     const templateVars = {
+      ...target.templateVars,
       PREVIEW_URL: url,
       PREVIEW_HOST: hostnameOf(url, env.PREVIEW_HOST),
       HOST_PORT: String(hostPort),
