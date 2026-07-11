@@ -29,6 +29,7 @@
     "hono": "^4.6.14",
     "octokit": "^5.0.5",
     "prisma": "^7.8.0",
+    "web-push": "^3.6.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -36,6 +37,7 @@
     "@types/better-sqlite3": "^7.6.11",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^22.10.2",
+    "@types/web-push": "^3.6.4",
     "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

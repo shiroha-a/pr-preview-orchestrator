@@ -14,9 +14,11 @@ const EXPECTED_TABLES = [
   "Job",
   "PreviewEnvironment",
   "PullRequest",
+  "PushSubscription",
   "Repository",
   "SettingsProfile",
   "User",
+  "WebPushKeys",
   "_prisma_migrations",
 ];
 

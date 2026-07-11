@@ -272,4 +272,22 @@ export const api = {
     }),
 
   deleteUser: (id: string) => request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+
+  // --- Web Push notifications (issue #77) ---
+
+  getPushPublicKey: () => request<{ publicKey: string }>("/push/public-key"),
+
+  subscribePush: (subscription: PushSubscriptionJSON) =>
+    request<{ ok: boolean }>("/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify(subscription),
+    }),
+
+  unsubscribePush: (endpoint: string) =>
+    request<{ ok: boolean }>("/push/unsubscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint }),
+    }),
+
+  sendTestPush: () => request<{ ok: boolean }>("/push/test", { method: "POST" }),
 };
