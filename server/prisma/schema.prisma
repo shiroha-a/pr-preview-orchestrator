@@ -133,6 +133,24 @@ model Job {
   updatedAt DateTime @updatedAt
 }
 
+/// Auto-generated VAPID key pair for Web Push notifications (issue #77).
+/// Created on first use; effectively a single row.
+model WebPushKeys {
+  id         String   @id @default(cuid())
+  publicKey  String
+  privateKey String
+  createdAt  DateTime @default(now())
+}
+
+/// A browser push subscription receiving build-completion notifications (issue #77).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
 /// An admin user for Basic authentication.
 model User {
   id           String   @id @default(cuid())

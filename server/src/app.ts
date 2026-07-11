@@ -11,6 +11,7 @@ import { env, hasGitHubToken } from "./env";
 import { dockerRoutes } from "./routes/docker";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
+import { createPushRoutes } from "./routes/push";
 import { repositoriesRoutes } from "./routes/repositories";
 import { createUsersRoutes } from "./routes/users";
 import { webhookRoutes } from "./routes/webhook";
@@ -49,6 +50,8 @@ export function createApp() {
   app.route("/api/metrics", metricsRoutes);
   app.route("/api/docker", dockerRoutes);
   app.route("/api/users", createUsersRoutes());
+  // ビルド完了のWebプッシュ通知(issue #77)。
+  app.route("/api/push", createPushRoutes());
 
   // Serve the built web SPA in production (only when web/dist exists, so the
   // dev server is unaffected).

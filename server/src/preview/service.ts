@@ -7,6 +7,8 @@ import { prisma } from "../db/client";
 import type { Prisma, Repository } from "../generated/prisma/client";
 import { env } from "../env";
 
+import { notifyAll } from "../push/service";
+
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
@@ -89,6 +91,8 @@ interface BuildTarget {
   label: string;
   /** Known commit SHA up front (PR head); null for branches (resolved after clone). */
   knownSha: string | null;
+  /** Web UI path opened from a push notification click (issue #77). */
+  appPath: string;
   /**
    * Static template variables known before the build starts (issue #75):
    * PR_NUMBER / PR_TITLE (branch previews fall back to the branch name) and
@@ -119,6 +123,7 @@ export function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
       dir: workspaceDir(branchWorkspaceSlug(repo.owner, repo.name, branch)),
       label: `branch ${branch}`,
       knownSha: null,
+      appPath: `/repos/${repo.owner}/${repo.name}`,
       templateVars: { PR_NUMBER: branch, PR_TITLE: branch, PROFILE_NAME: profileName },
     };
   }
@@ -136,6 +141,7 @@ export function resolveBuildTarget(preview: PreviewWithTarget): BuildTarget {
     dir: workspaceDir(prWorkspaceSlug(repo.owner, repo.name, pr.number)),
     label: `PR #${pr.number}`,
     knownSha: pr.headSha,
+    appPath: `/repos/${repo.owner}/${repo.name}/pull/${pr.number}`,
     templateVars: { PR_NUMBER: String(pr.number), PR_TITLE: pr.title, PROFILE_NAME: profileName },
   };
 }
@@ -351,6 +357,10 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
   if (!loaded) throw new Error("Preview environment not found");
   const target = resolveBuildTarget(loaded);
   const { settings, dir, composeProject: project } = target;
+  // プッシュ通知の本文: 対象を1行で表す(PRはタイトル付き。issue #77)。
+  const notifyBody = `${target.owner}/${target.name} ${target.label}${
+    loaded.pullRequest ? `「${loaded.pullRequest.title}」` : ""
+  }`;
 
   // 停止/破棄要求でビルドを中断できるようにする(issue #33)。controllerの登録は
   // try 内で行い、この後の更新が投げても finally で確実に解除されるようにする。
@@ -526,6 +536,13 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     await setStatus("running", { url, hostPort });
     log(`Preview is running at ${url}`);
 
+    // ビルド完了をプッシュ通知する(issue #77)。失敗してもビルドには影響させない。
+    void notifyAll({
+      title: "プレビュー起動完了",
+      body: notifyBody,
+      url: target.appPath,
+    });
+
     // 実行時ログのストリーミングを開始(ビルドログに続けてSSE配信。issue #16)。
     startLogStream({
       previewId,
@@ -545,6 +562,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     const message = e instanceof Error ? e.message : String(e);
     log(`ERROR: ${message}`);
     await setStatus("failed");
+    void notifyAll({ title: "ビルド失敗", body: notifyBody, url: target.appPath });
     throw e;
   } finally {
     activeBuilds.delete(previewId);

@@ -70,6 +70,8 @@ export async function truncateAll(prisma: PrismaClient): Promise<void> {
     "SettingsProfile",
     "Repository",
     "Job",
+    "PushSubscription",
+    "WebPushKeys",
   ];
   for (const table of tables) {
     await prisma.$executeRawUnsafe(`DELETE FROM "${table}";`);

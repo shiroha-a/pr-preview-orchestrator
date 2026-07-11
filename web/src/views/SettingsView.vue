@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { CheckCircle2, Plus, Trash2, UserPlus, XCircle } from "lucide-vue-next";
+import { Bell, CheckCircle2, Plus, Trash2, UserPlus, Volume2, XCircle } from "lucide-vue-next";
 
 import { api } from "../api/client";
+import {
+  disablePush,
+  enablePush,
+  getPushSubscribed,
+  playChime,
+  pushUnsupportedReason,
+  soundEnabled,
+} from "../notifications";
 import type { AppConfig, UserDTO } from "../types";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
@@ -83,6 +91,51 @@ async function deleteUser(user: UserDTO) {
     usersError.value = e instanceof Error ? e.message : "削除に失敗しました";
   } finally {
     deletingUserId.value = null;
+  }
+}
+
+// ビルド完了通知(issue #77)。通知音はブラウザ設定(localStorage)、プッシュ通知は
+// 購読状態をブラウザのPushManagerから復元する。
+const pushReason = pushUnsupportedReason();
+const pushEnabled = ref(false);
+const pushBusy = ref(false);
+const pushError = ref<string | null>(null);
+const pushTestSent = ref(false);
+
+onMounted(async () => {
+  pushEnabled.value = await getPushSubscribed().catch(() => false);
+});
+
+async function togglePush() {
+  pushBusy.value = true;
+  pushError.value = null;
+  pushTestSent.value = false;
+  try {
+    if (pushEnabled.value) {
+      await disablePush();
+      pushEnabled.value = false;
+    } else {
+      await enablePush();
+      pushEnabled.value = true;
+    }
+  } catch (e) {
+    pushError.value = e instanceof Error ? e.message : "プッシュ通知の切り替えに失敗しました";
+  } finally {
+    pushBusy.value = false;
+  }
+}
+
+async function sendTestPush() {
+  pushBusy.value = true;
+  pushError.value = null;
+  pushTestSent.value = false;
+  try {
+    await api.sendTestPush();
+    pushTestSent.value = true;
+  } catch (e) {
+    pushError.value = e instanceof Error ? e.message : "テスト送信に失敗しました";
+  } finally {
+    pushBusy.value = false;
   }
 }
 
@@ -278,6 +331,62 @@ const inputClass =
             <span class="text-gray-600 dark:text-gray-300">ポート範囲</span>
             <code class="text-xs">{{ config.preview.portMin }} - {{ config.preview.portMax }}</code>
           </div>
+        </div>
+      </BaseCard>
+
+      <!-- ビルド完了通知(issue #77) -->
+      <BaseCard>
+        <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+          <span class="text-sm font-semibold">通知(ビルド完了)</span>
+        </div>
+        <div class="space-y-3 px-4 py-3 text-sm">
+          <div class="flex items-center justify-between gap-2 py-1.5">
+            <label class="inline-flex items-center gap-2 text-gray-600 dark:text-gray-300">
+              <Volume2 class="h-4 w-4" />
+              <input v-model="soundEnabled" type="checkbox" class="h-3.5 w-3.5 accent-blue-600" />
+              通知音を鳴らす
+            </label>
+            <BaseButton size="sm" variant="secondary" @click="playChime('success')">
+              テスト再生
+            </BaseButton>
+          </div>
+          <p class="text-xs text-gray-500">
+            プレビューのページを開いているとき、ビルド完了(成功/失敗)で音を鳴らします。この設定はブラウザごとに保存されます。
+          </p>
+
+          <div class="flex items-center justify-between gap-2 py-1.5">
+            <label
+              class="inline-flex items-center gap-2 text-gray-600 dark:text-gray-300"
+              :class="pushReason ? 'opacity-50' : ''"
+            >
+              <Bell class="h-4 w-4" />
+              <input
+                type="checkbox"
+                class="h-3.5 w-3.5 accent-blue-600"
+                :checked="pushEnabled"
+                :disabled="pushBusy || pushReason != null"
+                @change="togglePush"
+              />
+              プッシュ通知を受け取る
+            </label>
+            <div class="flex items-center gap-2">
+              <span v-if="pushTestSent" class="text-xs text-green-600">送信しました</span>
+              <BaseButton
+                v-if="pushEnabled"
+                size="sm"
+                variant="secondary"
+                :disabled="pushBusy"
+                @click="sendTestPush"
+              >
+                テスト送信
+              </BaseButton>
+            </div>
+          </div>
+          <p v-if="pushReason" class="text-xs text-amber-600">{{ pushReason }}</p>
+          <p v-if="pushError" class="text-xs text-red-600">{{ pushError }}</p>
+          <p class="text-xs text-gray-500">
+            タブを閉じていてもビルド完了をブラウザ通知で受け取れます。通知に必要な鍵(VAPID)はサーバーが自動生成するため設定は不要です。通知クリックで該当のPR/ブランチページを開きます。
+          </p>
         </div>
       </BaseCard>
     </template>

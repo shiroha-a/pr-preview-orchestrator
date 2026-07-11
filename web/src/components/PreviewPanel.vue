@@ -12,6 +12,7 @@ import {
 } from "lucide-vue-next";
 
 import type { RestartPreviewOptions, StartPreviewOptions } from "../api/client";
+import { playBuildSound } from "../notifications";
 import type { PreviewDTO } from "../types";
 import BaseBadge from "./ui/BaseBadge.vue";
 import PreviewStatusBadge from "./PreviewStatusBadge.vue";
@@ -71,14 +72,15 @@ const rebuildOpts = ref({
   resetTunnel: false,
 });
 
-const ACTIVE = ["pending", "cloning", "building", "stopping"];
+const BUILD_STATES = ["pending", "cloning", "building"];
+const ACTIVE = [...BUILD_STATES, "stopping"];
 const isActive = computed(() => ACTIVE.includes(status.value));
 const canStop = computed(
   () => previewId.value != null && !isActive.value && status.value !== "idle",
 );
 // ビルド進行中(clone/build)は中断して破棄できるようにする(issue #33)。
 // stopping は片付け中なので対象外。
-const canInterrupt = computed(() => ["pending", "cloning", "building"].includes(status.value));
+const canInterrupt = computed(() => BUILD_STATES.includes(status.value));
 
 // ビルド済みコミットがPR最新コミットと異なれば「古い」と判定する(issue #17)。
 const isOutdated = computed(
@@ -100,6 +102,10 @@ function connect(id: string) {
   es.addEventListener("status", (e) => {
     const data = JSON.parse((e as MessageEvent).data) as { status?: string };
     if (data.status) {
+      // ビルド進行中→完了の遷移でのみ通知音を鳴らす(issue #77)。
+      if (BUILD_STATES.includes(status.value) && ["running", "failed"].includes(data.status)) {
+        playBuildSound(data.status === "running" ? "success" : "failed");
+      }
       status.value = data.status;
       if (["running", "stopped", "paused"].includes(data.status)) void refresh();
     }
