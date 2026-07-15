@@ -37,9 +37,14 @@ export interface SettingsProfileDTO {
   fileRewrites: string | null;
   overlayFiles: string | null;
   resetVolumes: boolean | null;
+  // Where images are built (issue #80); null inherits the repository setting.
+  buildMode: BuildMode | null;
   createdAt: string;
   updatedAt: string;
 }
+
+// 外部ビルドサーバーの利用方針(issue #80)。
+export type BuildMode = "auto" | "remote" | "local";
 
 export interface RepositoryDTO {
   id: string;
@@ -53,6 +58,8 @@ export interface RepositoryDTO {
   fileRewrites: string | null;
   overlayFiles: string | null;
   resetVolumes: boolean;
+  // Where images are built (issue #80); null inherits the global default.
+  buildMode: BuildMode | null;
   createdAt: string;
   updatedAt: string;
   _count?: { pullRequests: number };
@@ -191,6 +198,18 @@ export interface AppConfig {
     workspacesDir: string;
     tunnel: boolean;
   };
+  // 外部ビルドサーバーの既定モード(issue #80)。
+  buildModeDefault: BuildMode;
+}
+
+// 登録済みの外部ビルドサーバー(issue #80)。トークンは登録時のみ返される。
+export interface BuildAgentDTO {
+  id: string;
+  name: string;
+  enabled: boolean;
+  lastSeenAt: string | null;
+  online: boolean;
+  createdAt: string;
 }
 
 export interface UserDTO {

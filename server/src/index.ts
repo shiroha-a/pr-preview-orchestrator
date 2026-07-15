@@ -1,12 +1,23 @@
-import { serve } from "@hono/node-server";
-
-import { createApp } from "./app";
 import { env } from "./env";
-import { syncAdminUser } from "./db/seed";
-import { initAuthCache } from "./auth/middleware";
-import { startWorker } from "./jobs/worker";
 
 async function main() {
+  // agentモードはDB/HTTPサーバー/WebUIを一切持たないため、オーケストレーター側の
+  // モジュール(Prisma等)を読み込まないよう動的importで分岐する(issue #80)。
+  if (env.SERVER_MODE === "agent") {
+    const { runAgent } = await import("./agent/main");
+    await runAgent();
+    return;
+  }
+
+  const [{ serve }, { createApp }, { syncAdminUser }, { initAuthCache }, { startWorker }] =
+    await Promise.all([
+      import("@hono/node-server"),
+      import("./app"),
+      import("./db/seed"),
+      import("./auth/middleware"),
+      import("./jobs/worker"),
+    ]);
+
   await initAuthCache();
   await syncAdminUser();
 

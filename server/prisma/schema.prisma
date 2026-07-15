@@ -28,6 +28,9 @@ model Repository {
   overlayFiles   String?
   // Reset Docker volumes on each (re)build to start from a clean state.
   resetVolumes   Boolean  @default(false)
+  // Where images are built (issue #80): "auto" / "remote" / "local".
+  // Null inherits the global default (BUILD_MODE_DEFAULT).
+  buildMode      String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -54,6 +57,8 @@ model SettingsProfile {
   // Overlay files (JSON array).
   overlayFiles String?
   resetVolumes Boolean?
+  // Where images are built (issue #80); null inherits the repository setting.
+  buildMode    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -149,6 +154,21 @@ model PushSubscription {
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
+}
+
+/// A registered external build agent (issue #80). Agents authenticate with a
+/// bearer token (only its hash is stored) and pull build jobs from the
+/// orchestrator, so they never need an inbound connection.
+model BuildAgent {
+  id         String    @id @default(cuid())
+  name       String    @unique
+  // SHA-256 hex of the agent's bearer token; the plaintext is shown only once.
+  tokenHash  String    @unique
+  // Updated on every poll; an agent is considered online while recent.
+  lastSeenAt DateTime?
+  enabled    Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 }
 
 /// An admin user for Basic authentication.

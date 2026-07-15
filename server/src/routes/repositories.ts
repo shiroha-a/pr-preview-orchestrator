@@ -187,6 +187,7 @@ const profileSchema = z.object({
   fileRewrites: z.array(rewriteRuleSchema).nullable().optional(),
   overlayFiles: z.array(profileOverlayEntrySchema).nullable().optional(),
   resetVolumes: z.boolean().nullable().optional(),
+  buildMode: z.enum(["auto", "remote", "local"]).nullable().optional(),
 });
 
 const settingsSchema = z.object({
@@ -196,6 +197,7 @@ const settingsSchema = z.object({
   fileRewrites: z.array(rewriteRuleSchema).optional(),
   overlayFiles: z.array(overlayFileSchema).optional(),
   resetVolumes: z.boolean().optional(),
+  buildMode: z.enum(["auto", "remote", "local"]).nullable().optional(),
   profiles: z.array(profileSchema).optional(),
 });
 
@@ -238,6 +240,7 @@ repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
     fileRewrites: p.fileRewrites ? JSON.stringify(p.fileRewrites) : null,
     overlayFiles: p.overlayFiles ? JSON.stringify(p.overlayFiles) : null,
     resetVolumes: p.resetVolumes ?? null,
+    buildMode: p.buildMode ?? null,
   });
 
   const updated = await prisma.$transaction(async (tx) => {
@@ -262,6 +265,7 @@ repositoriesRoutes.put("/:owner/:name/settings", async (c) => {
         fileRewrites: parsed.data.fileRewrites ? JSON.stringify(parsed.data.fileRewrites) : null,
         overlayFiles: parsed.data.overlayFiles ? JSON.stringify(parsed.data.overlayFiles) : null,
         resetVolumes: parsed.data.resetVolumes ?? false,
+        buildMode: parsed.data.buildMode ?? null,
       },
       include: { profiles: { orderBy: { name: "asc" } } },
     });

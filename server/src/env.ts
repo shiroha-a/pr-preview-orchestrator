@@ -9,6 +9,16 @@ import { z } from "zod";
  * rate limits and enables access to private repositories.
  */
 const envSchema = z.object({
+  // Process role (issue #80): "orchestrator" runs the full server, "agent" runs
+  // the pulling build agent (no HTTP server, no DB, no WebUI).
+  SERVER_MODE: z.enum(["orchestrator", "agent"]).default("orchestrator"),
+
+  // Agent mode only: base URL of the orchestrator and the bearer token issued
+  // at registration time (shown once in the WebUI).
+  // URL形式を検証し、typo時に認証エラーと紛らわしい失敗にならないようにする。
+  ORCHESTRATOR_URL: z.url().optional(),
+  AGENT_TOKEN: z.string().optional(),
+
   DATABASE_URL: z.string().default("file:./dev.db"),
 
   // HTTP server. Uses API_PORT (not the generic PORT) to avoid clashing with
@@ -59,6 +69,19 @@ const envSchema = z.object({
   // Max number of preview jobs processed in parallel (issue #33). Builds for
   // different previews run concurrently; same-preview jobs stay serialized.
   PREVIEW_JOB_CONCURRENCY: z.coerce.number().int().min(1).default(3),
+
+  // Where images are built when neither the repository nor the profile sets a
+  // buildMode (issue #80): "auto" uses a remote build agent when one is online
+  // and falls back to local, "remote" requires an agent, "local" never
+  // dispatches remotely.
+  BUILD_MODE_DEFAULT: z.enum(["auto", "remote", "local"]).default("auto"),
+
+  // An agent counts as online while its last poll is within this window.
+  AGENT_ONLINE_THRESHOLD_MS: z.coerce.number().int().default(90000),
+
+  // How long a queued remote build may wait for an agent to claim it before
+  // falling back to a local build (issue #80).
+  REMOTE_BUILD_CLAIM_TIMEOUT_MS: z.coerce.number().int().default(30000),
 
   // Directory of the built web SPA, served by Hono in production (relative to server/).
   WEB_DIST_DIR: z.string().default("../web/dist"),

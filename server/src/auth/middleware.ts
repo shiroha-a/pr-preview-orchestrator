@@ -32,8 +32,7 @@ export function setCachedUserCount(value: number | null): void {
  * ユーザー不在時も bcrypt.compare を走らせるためのダミーハッシュ。
  * ユーザー名列挙のタイミング攻撃を防ぐ。
  */
-const DUMMY_HASH =
-  "$2b$12$abcdefghijklmnopqrstuvwxycV/PgbONQlK6HsN6qPoQfXzAzMn3Gq";
+const DUMMY_HASH = "$2b$12$abcdefghijklmnopqrstuvwxycV/PgbONQlK6HsN6qPoQfXzAzMn3Gq";
 
 /**
  * DB に保存された bcrypt ハッシュ照合型 Basic Auth ミドルウェア。

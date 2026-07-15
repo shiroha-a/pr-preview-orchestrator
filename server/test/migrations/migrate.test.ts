@@ -11,6 +11,7 @@ import {
 } from "../helpers";
 
 const EXPECTED_TABLES = [
+  "BuildAgent",
   "Job",
   "PreviewEnvironment",
   "PullRequest",

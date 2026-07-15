@@ -5,7 +5,13 @@ import { Download, Plus, Trash2, Upload } from "lucide-vue-next";
 
 import { api } from "../api/client";
 import type { ProfileInput } from "../api/client";
-import type { OverlayFile, ProfileOverlayEntry, RewriteRule, SettingsProfileDTO } from "../types";
+import type {
+  BuildMode,
+  OverlayFile,
+  ProfileOverlayEntry,
+  RewriteRule,
+  SettingsProfileDTO,
+} from "../types";
 import BaseButton from "../components/ui/BaseButton.vue";
 import BaseCard from "../components/ui/BaseCard.vue";
 import OverlayFilesEditor from "../components/OverlayFilesEditor.vue";
@@ -26,6 +32,8 @@ const composePath = ref("docker-compose.yml");
 const webService = ref("");
 const internalPort = ref("");
 const resetVolumes = ref(false);
+// 空文字=グローバル既定(BUILD_MODE_DEFAULT)を継承する(issue #80)。
+const buildMode = ref<BuildMode | "">("");
 const rules = ref<RewriteRule[]>([]);
 const overlays = ref<OverlayFile[]>([]);
 
@@ -45,11 +53,13 @@ interface ProfileForm {
     fileRewrites: boolean;
     overlayFiles: boolean;
     resetVolumes: boolean;
+    buildMode: boolean;
   };
   composePath: string;
   webService: string;
   internalPort: string;
   resetVolumes: boolean;
+  buildMode: BuildMode;
   rules: RewriteRule[];
   overlays: OverlayFile[];
   deletePaths: string[];
@@ -82,12 +92,14 @@ function profileFormFromDTO(dto: SettingsProfileDTO): ProfileForm {
       fileRewrites: dto.fileRewrites != null,
       overlayFiles: dto.overlayFiles != null,
       resetVolumes: dto.resetVolumes != null,
+      buildMode: dto.buildMode != null,
     },
     // 未上書きの項目は現在の既定値を初期表示し、チェック時にそこから編集できるようにする。
     composePath: dto.composePath ?? composePath.value,
     webService: dto.webService ?? webService.value,
     internalPort: dto.internalPort != null ? String(dto.internalPort) : internalPort.value,
     resetVolumes: dto.resetVolumes ?? resetVolumes.value,
+    buildMode: dto.buildMode ?? (buildMode.value || "auto"),
     rules:
       dto.fileRewrites != null
         ? parseJsonArray<RewriteRule>(dto.fileRewrites)
@@ -108,6 +120,7 @@ async function load() {
     webService.value = repository.webService ?? "";
     internalPort.value = repository.internalPort != null ? String(repository.internalPort) : "";
     resetVolumes.value = repository.resetVolumes;
+    buildMode.value = repository.buildMode ?? "";
     rules.value = parseJsonArray<RewriteRule>(repository.fileRewrites);
     overlays.value = parseJsonArray<OverlayFile>(repository.overlayFiles);
     profiles.value = (repository.profiles ?? []).map(profileFormFromDTO);
@@ -131,11 +144,13 @@ function addProfile() {
       fileRewrites: false,
       overlayFiles: false,
       resetVolumes: false,
+      buildMode: false,
     },
     composePath: composePath.value,
     webService: webService.value,
     internalPort: internalPort.value,
     resetVolumes: resetVolumes.value,
+    buildMode: buildMode.value || "auto",
     rules: rules.value.map((r) => ({ ...r })),
     // オーバーレイは既定への追加方式なので空から始める(issue #56)。
     overlays: [],
@@ -186,6 +201,7 @@ function toProfileInput(p: ProfileForm): ProfileInput {
         ]
       : null,
     resetVolumes: p.overrides.resetVolumes ? p.resetVolumes : null,
+    buildMode: p.overrides.buildMode ? p.buildMode : null,
   };
 }
 
@@ -197,6 +213,7 @@ function currentSettings() {
     fileRewrites: rules.value.filter((r) => r.file.trim() && r.pattern.trim()),
     overlayFiles: overlays.value.filter((o) => o.path.trim()),
     resetVolumes: resetVolumes.value,
+    buildMode: buildMode.value || null,
     // 名前空欄のプロファイルも除外せず送る(保存前のバリデーションで弾く。issue #54)。
     profiles: profiles.value.map(toProfileInput),
   };
@@ -257,6 +274,10 @@ function importSettings(event: Event) {
       webService.value = typeof data.webService === "string" ? data.webService : "";
       internalPort.value = data.internalPort != null ? String(data.internalPort as number) : "";
       resetVolumes.value = Boolean(data.resetVolumes);
+      buildMode.value =
+        data.buildMode === "auto" || data.buildMode === "remote" || data.buildMode === "local"
+          ? data.buildMode
+          : "";
       rules.value = Array.isArray(data.fileRewrites) ? (data.fileRewrites as RewriteRule[]) : [];
       overlays.value = Array.isArray(data.overlayFiles) ? (data.overlayFiles as OverlayFile[]) : [];
       profiles.value = Array.isArray(data.profiles)
@@ -271,6 +292,7 @@ function importSettings(event: Event) {
               fileRewrites: p.fileRewrites != null ? JSON.stringify(p.fileRewrites) : null,
               overlayFiles: p.overlayFiles != null ? JSON.stringify(p.overlayFiles) : null,
               resetVolumes: p.resetVolumes ?? null,
+              buildMode: p.buildMode ?? null,
               createdAt: "",
               updatedAt: "",
             }),
@@ -385,6 +407,22 @@ const textareaClass =
           <input v-model="resetVolumes" type="checkbox" class="mt-0.5 h-4 w-4" />
           <span> 起動のたびにDockerボリュームを初期化する(DB・ファイル等をリセット) </span>
         </label>
+
+        <div>
+          <label class="mb-1 block text-sm font-medium">ビルドモード</label>
+          <select v-model="buildMode" :class="inputClass">
+            <option value="">既定(グローバル設定に従う)</option>
+            <option value="auto">
+              auto: 外部ビルドサーバーがオンラインなら委譲、なければローカル
+            </option>
+            <option value="remote">remote: 常に外部ビルドサーバー(不在時は失敗)</option>
+            <option value="local">local: 常にローカルでビルド</option>
+          </select>
+          <p class="mt-1 text-xs text-gray-500">
+            Dockerイメージのビルドを外部ビルドサーバーへ委譲するかどうか(issue
+            #80)。ビルドサーバーは設定画面で登録できます。
+          </p>
+        </div>
 
         <!-- 設定プロファイル(issue #52): チェックした項目だけ既定を上書きする -->
         <div class="border-t border-gray-100 pt-4 dark:border-gray-800">
@@ -515,6 +553,22 @@ const textareaClass =
                   <input v-model="p.resetVolumes" type="checkbox" class="mt-0.5 h-4 w-4" />
                   <span>起動のたびにDockerボリュームを初期化する</span>
                 </label>
+              </div>
+
+              <div>
+                <label class="flex items-center gap-2 font-medium">
+                  <input v-model="p.overrides.buildMode" type="checkbox" class="h-4 w-4" />
+                  ビルドモードを上書き
+                </label>
+                <select
+                  v-if="p.overrides.buildMode"
+                  v-model="p.buildMode"
+                  :class="[inputClass, 'mt-2']"
+                >
+                  <option value="auto">auto: オンラインなら外部、なければローカル</option>
+                  <option value="remote">remote: 常に外部ビルドサーバー</option>
+                  <option value="local">local: 常にローカル</option>
+                </select>
               </div>
             </div>
           </div>

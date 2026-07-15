@@ -1,5 +1,7 @@
 import type {
   AppConfig,
+  BuildAgentDTO,
+  BuildMode,
   CleanupStatus,
   CommentDTO,
   DockerDiskUsage,
@@ -38,6 +40,7 @@ export interface ProfileInput {
   /** Additive entries applied over the default overlays (issue #56). */
   overlayFiles: ProfileOverlayEntry[] | null;
   resetVolumes: boolean | null;
+  buildMode: BuildMode | null;
 }
 
 export interface RepoSettingsInput {
@@ -47,6 +50,7 @@ export interface RepoSettingsInput {
   fileRewrites: RewriteRule[];
   overlayFiles: OverlayFile[];
   resetVolumes: boolean;
+  buildMode: BuildMode | null;
   profiles: ProfileInput[];
 }
 
@@ -272,6 +276,24 @@ export const api = {
     }),
 
   deleteUser: (id: string) => request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+
+  // --- External build agents (issue #80) ---
+
+  getBuildAgents: () => request<{ agents: BuildAgentDTO[] }>("/agents"),
+
+  createBuildAgent: (name: string) =>
+    request<{ agent: Pick<BuildAgentDTO, "id" | "name" | "enabled">; token: string }>("/agents", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  setBuildAgentEnabled: (id: string, enabled: boolean) =>
+    request<{ ok: boolean }>(`/agents/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  deleteBuildAgent: (id: string) => request<{ ok: boolean }>(`/agents/${id}`, { method: "DELETE" }),
 
   // --- Web Push notifications (issue #77) ---
 

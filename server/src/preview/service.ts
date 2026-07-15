@@ -1,31 +1,30 @@
-import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
+import { runRemoteBuild } from "../agents/registry";
+import { hasOnlineAgent } from "../agents/service";
 import { prisma } from "../db/client";
 import type { Prisma, Repository } from "../generated/prisma/client";
 import { env } from "../env";
 
 import { notifyAll } from "../push/service";
 
+import {
+  BuildCancelledError,
+  buildImages,
+  composeArgs,
+  injectBuildFiles,
+  OVERRIDE_FILE,
+  prepareWorkspace,
+  runCommand,
+} from "./engine";
 import { emitPreviewLog, emitPreviewStatus } from "./events";
+import { listComposeBuiltImages } from "./images";
 import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
-import { applyOverlays } from "./overlay";
-import { applyRewrites, parseRewriteRules } from "./rewrite";
-import { composeFileArgs, type EffectiveSettings, resolveSettings } from "./settings";
+import { type EffectiveSettings, resolveSettings } from "./settings";
 import { getTunnelUrl, isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
-
-const OVERRIDE_FILE = "preview.orchestrator.override.yml";
-
-/** Error thrown when a build is cancelled by a stop/destroy request (issue #33). */
-class BuildCancelledError extends Error {
-  constructor() {
-    super("Build cancelled");
-    this.name = "BuildCancelledError";
-  }
-}
 
 /**
  * In-flight builds, keyed by previewId. A stop/destroy request aborts the
@@ -158,170 +157,6 @@ function loadPreviewWithTarget(previewId: string): Promise<PreviewWithTarget | n
   });
 }
 
-interface RunOptions {
-  cwd?: string;
-  onLine?: (line: string) => void;
-  /** Substrings to redact from output (e.g. access tokens). */
-  mask?: string[];
-  /** Kill the process and reject after this many milliseconds. */
-  timeoutMs?: number;
-  /** Abort signal to cancel (kill) the running process (issue #33). */
-  signal?: AbortSignal;
-}
-
-/** Run a command, streaming combined stdout/stderr line-by-line to onLine. */
-function runCommand(command: string, args: string[], options: RunOptions = {}): Promise<number> {
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) {
-      reject(new BuildCancelledError());
-      return;
-    }
-    const child = spawn(command, args, { cwd: options.cwd });
-
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const clearTimer = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
-    // 中断要求が来たら子プロセスをkillしてキャンセルとして reject する(issue #33)。
-    const onAbort = () => {
-      if (settled) return;
-      settled = true;
-      clearTimer();
-      child.kill("SIGKILL");
-      reject(new BuildCancelledError());
-    };
-    options.signal?.addEventListener("abort", onAbort, { once: true });
-    const cleanupAbort = () => options.signal?.removeEventListener("abort", onAbort);
-    // アイドルタイムアウト: 出力が一定時間途切れたときだけ打ち切る。巨大ビルドでも
-    // 進捗(出力)がある限りタイムアウトしない(issue #14)。
-    const armTimer = () => {
-      if (!options.timeoutMs) return;
-      clearTimer();
-      timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        cleanupAbort();
-        child.kill("SIGKILL");
-        reject(
-          new Error(`Command timed out after ${options.timeoutMs}ms with no output: ${command}`),
-        );
-      }, options.timeoutMs);
-    };
-    armTimer();
-
-    const handle = (buf: Buffer) => {
-      armTimer();
-      let text = buf.toString();
-      for (const secret of options.mask ?? []) {
-        if (secret) text = text.split(secret).join("***");
-      }
-      for (const line of text.split(/\r?\n/)) {
-        if (line.length > 0) options.onLine?.(line);
-      }
-    };
-
-    child.stdout.on("data", handle);
-    child.stderr.on("data", handle);
-    child.on("error", (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimer();
-      cleanupAbort();
-      reject(err);
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimer();
-      cleanupAbort();
-      resolve(code ?? 0);
-    });
-  });
-}
-
-interface PrepareWorkspaceOptions {
-  dir: string;
-  owner: string;
-  name: string;
-  /** Ref to fetch from origin (e.g. `pull/12/head` or a branch name). */
-  fetchRef: string;
-  /** Optional token for cloning private repositories. */
-  token?: string;
-  onLine: (line: string) => void;
-  /** Abort signal to cancel the clone/fetch mid-flight (issue #33). */
-  signal?: AbortSignal;
-}
-
-/**
- * Clone (or update) the target repository, check out the requested ref (a PR
- * head or a branch), and return the checked-out commit SHA.
- */
-async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> {
-  const { dir, owner, name, fetchRef, token, onLine, signal } = opts;
-  const cloneUrl = token
-    ? `https://x-access-token:${token}@github.com/${owner}/${name}.git`
-    : `https://github.com/${owner}/${name}.git`;
-  const mask = token ? [token] : [];
-
-  if (!existsSync(dir)) {
-    await mkdir(dirname(dir), { recursive: true });
-    await runCommand("git", ["clone", "--depth", "50", cloneUrl, dir], { onLine, mask, signal });
-  } else {
-    await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cloneUrl], { mask, signal });
-    await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], {
-      onLine,
-      mask,
-      signal,
-    });
-  }
-
-  // Fetch the requested ref (PR head ref works for forks too) and check it out.
-  const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", fetchRef], {
-    onLine,
-    mask,
-    signal,
-  });
-  if (fetchCode !== 0) throw new Error(`git fetch of ${fetchRef} failed (code ${fetchCode})`);
-
-  const checkoutCode = await runCommand("git", ["-C", dir, "checkout", "-f", "FETCH_HEAD"], {
-    onLine,
-    mask,
-    signal,
-  });
-  if (checkoutCode !== 0) throw new Error(`git checkout failed (code ${checkoutCode})`);
-
-  // 実際にチェックアウトしたコミットSHAを取得する(ブランチは事前にSHA不明なため)。
-  let sha = "";
-  await runCommand("git", ["-C", dir, "rev-parse", "HEAD"], {
-    onLine: (line) => {
-      const trimmed = line.trim();
-      if (trimmed) sha = trimmed;
-    },
-  });
-  return sha;
-}
-
-interface WriteOverrideOptions {
-  dir: string;
-  webService: string;
-  hostPort: number;
-  internalPort: number;
-}
-
-/** Write a compose override mapping the web service to a dynamic host port. */
-function writeOverride(opts: WriteOverrideOptions): void {
-  const { dir, webService, hostPort, internalPort } = opts;
-  // `!override` replaces any existing `ports` on the service, so a repository's
-  // existing docker-compose.yml (even with fixed host ports) can be reused
-  // without conflicts across simultaneous previews.
-  const yaml = `services:\n  ${webService}:\n    ports: !override\n      - "${hostPort}:${internalPort}"\n`;
-  writeFileSync(join(dir, OVERRIDE_FILE), yaml);
-}
-
 function hostnameOf(url: string, fallback: string): string {
   try {
     return new URL(url).hostname;
@@ -345,6 +180,51 @@ function hostnameOf(url: string, fallback: string): string {
  * - `keepTunnel`: reuse the existing tunnel/URL instead of creating a new one
  *   (keeps the app's baked-in URL valid; avoids DB regeneration for e.g. Misskey).
  */
+/** Inputs for the build-step decision (issue #80). Exported for tests. */
+export interface BuildStepOptions {
+  /** Effective build mode: "auto" | "remote" | "local". */
+  buildMode: string;
+  /** Whether at least one enabled agent is currently online. */
+  agentOnline: boolean;
+  /** Queue the build on a remote agent and resolve when its images are loaded. */
+  dispatchRemote: () => Promise<void>;
+  /** Run `docker compose build` locally. */
+  buildLocal: () => Promise<void>;
+  log: (line: string) => void;
+}
+
+/**
+ * Decide where the image build runs and execute it (issue #80). "remote"
+ * requires an online agent and never falls back; "auto" prefers a remote agent
+ * but falls back to a local build when none is online or the dispatch fails.
+ * Cancellation (BuildCancelledError) always propagates unchanged.
+ */
+export async function executeBuildStep(opts: BuildStepOptions): Promise<void> {
+  const { buildMode, agentOnline, dispatchRemote, buildLocal, log } = opts;
+  if (buildMode !== "local") {
+    if (!agentOnline && buildMode === "remote") {
+      throw new Error(
+        "ビルドモードがremoteに設定されていますが、オンラインの外部ビルドサーバーがありません。",
+      );
+    }
+    if (agentOnline) {
+      try {
+        log("Dispatching image build to a remote build agent...");
+        await dispatchRemote();
+        log("Remote build finished; images are loaded locally.");
+        return;
+      } catch (e) {
+        if (e instanceof BuildCancelledError) throw e;
+        const message = e instanceof Error ? e.message : String(e);
+        // remote指定はフォールバックせず失敗させる。autoはローカルビルドへ縮退する。
+        if (buildMode === "remote") throw new Error(`リモートビルドに失敗しました: ${message}`);
+        log(`WARN: remote build failed (${message}); falling back to a local build`);
+      }
+    }
+  }
+  await buildLocal();
+}
+
 export interface BuildOptions {
   noCache?: boolean;
   resetVolumes?: boolean;
@@ -401,6 +281,9 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
         "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
       );
     }
+    // narrowing後に束縛しておく(クロージャ内では絞り込みが効かないため)。
+    const webService = settings.webService;
+    const internalPort = settings.internalPort;
     if (loaded.profile) {
       log(`Using settings profile "${loaded.profile.name}"`);
     }
@@ -456,27 +339,15 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       HOST_PORT: String(hostPort),
     };
 
-    // Write overlay files (e.g. a test-specific compose file or config from
-    // outside the target repo) into the workspace. Content supports the same
-    // template variables. 既定+プロファイルのマージ済み(issue #56)。
-    const overlays = settings.overlayFiles;
-    if (overlays.length > 0) {
-      log(`Writing ${overlays.length} overlay file(s)...`);
-      applyOverlays(dir, overlays, templateVars, log);
-    }
-
-    // Apply file rewrite rules (e.g. inject the preview URL into a config file).
-    const rules = parseRewriteRules(settings.fileRewrites);
-    if (rules.length > 0) {
-      log(`Applying ${rules.length} file rewrite rule(s)...`);
-      applyRewrites(dir, rules, templateVars, log);
-    }
-
-    writeOverride({
+    injectBuildFiles({
       dir,
-      webService: settings.webService,
+      overlayFiles: settings.overlayFiles,
+      fileRewrites: settings.fileRewrites,
+      webService,
       hostPort,
-      internalPort: settings.internalPort,
+      internalPort,
+      templateVars,
+      onLine: log,
     });
 
     await setStatus("building", { hostPort, url });
@@ -486,49 +357,77 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       log("Resetting volumes (docker compose down -v)...");
       await runCommand(
         "docker",
-        [
-          "compose",
-          ...composeFileArgs(settings.composePath),
-          "-f",
-          OVERRIDE_FILE,
-          "-p",
-          project,
-          "down",
-          "-v",
-          "--remove-orphans",
-        ],
+        [...composeArgs(settings.composePath, project), "down", "-v", "--remove-orphans"],
         { cwd: dir, onLine: log, mask, signal },
       );
     }
 
-    // 複数composeファイルは後のファイルが前を上書きする(issue #52)。
-    const composeFiles = [
-      "compose",
-      ...composeFileArgs(settings.composePath),
-      "-f",
-      OVERRIDE_FILE,
-      "-p",
-      project,
-    ];
+    // ビルド工程は buildMode に応じて外部ビルドサーバーへ委譲できる(issue #80)。
+    // リモート成功時はイメージが docker load 済みなので、後続の up -d がそのまま使う。
+    const buildMode = settings.buildMode ?? env.BUILD_MODE_DEFAULT;
+    await executeBuildStep({
+      buildMode,
+      agentOnline: buildMode === "local" ? false : await hasOnlineAgent(),
+      log,
+      dispatchRemote: async () => {
+        // このビルドが生成すべきイメージタグを本体側のcheckoutから算出する。
+        // エージェントはこの一覧だけをsaveし、受領側も同じ一覧で検証する(issue #80レビュー2)。
+        const expectedImages = await listComposeBuiltImages({
+          dir,
+          composePath: settings.composePath,
+          composeProject: project,
+          onLine: log,
+        });
+        await runRemoteBuild(
+          {
+            previewId,
+            owner: target.owner,
+            name: target.name,
+            fetchRef: target.fetchRef,
+            sha,
+            composeProject: project,
+            composePath: settings.composePath,
+            overlayFiles: settings.overlayFiles,
+            fileRewrites: settings.fileRewrites,
+            webService,
+            internalPort,
+            hostPort,
+            templateVars,
+            noCache,
+            expectedImages,
+            githubToken: token,
+          },
+          {
+            onLine: log,
+            signal,
+            claimTimeoutMs: env.REMOTE_BUILD_CLAIM_TIMEOUT_MS,
+            idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+            // remote指定はフォールバックしないため、オンラインのエージェントが居る限り
+            // claim待ちを続ける(直列処理中のビジー待ち)。オフラインになれば失効する。
+            // autoはフォールバックがあるので早期にローカルへ縮退する(issue #80レビュー指摘1)。
+            shouldKeepWaiting: buildMode === "remote" ? () => hasOnlineAgent() : undefined,
+          },
+        );
+      },
+      buildLocal: async () => {
+        log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
+        await buildImages({
+          dir,
+          composePath: settings.composePath,
+          composeProject: project,
+          noCache,
+          timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+          mask,
+          signal,
+          onLine: log,
+        });
+      },
+    });
 
-    // `docker compose up` には --no-cache がないため、キャッシュ破棄時は先に
-    // `build --no-cache` でイメージを作り直してから up する(issue #20)。
-    if (noCache) {
-      log("Running docker compose build --no-cache...");
-      const buildCode = await runCommand("docker", [...composeFiles, "build", "--no-cache"], {
-        cwd: dir,
-        onLine: log,
-        mask,
-        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-        signal,
-      });
-      if (buildCode !== 0) throw new Error(`docker compose build exited with code ${buildCode}`);
-    }
-
-    log(`Running docker compose up -d${noCache ? "" : " --build"}...`);
+    log("Running docker compose up -d...");
     const code = await runCommand(
       "docker",
-      [...composeFiles, "up", "-d", ...(noCache ? [] : ["--build"])],
+      [...composeArgs(settings.composePath, project), "up", "-d"],
       { cwd: dir, onLine: log, mask, timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS, signal },
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
@@ -597,12 +496,7 @@ export async function destroyPreview(previewId: string): Promise<void> {
       await runCommand(
         "docker",
         [
-          "compose",
-          ...composeFileArgs(settings.composePath),
-          "-f",
-          OVERRIDE_FILE,
-          "-p",
-          preview.composeProject,
+          ...composeArgs(settings.composePath, preview.composeProject),
           "down",
           "-v",
           "--remove-orphans",
@@ -674,15 +568,7 @@ export async function stopPreview(previewId: string): Promise<void> {
     if (existsSync(dir)) {
       await runCommand(
         "docker",
-        [
-          "compose",
-          ...composeFileArgs(settings.composePath),
-          "-f",
-          OVERRIDE_FILE,
-          "-p",
-          preview.composeProject,
-          "stop",
-        ],
+        [...composeArgs(settings.composePath, preview.composeProject), "stop"],
         { cwd: dir, onLine: log, timeoutMs },
       );
     } else {
@@ -752,30 +638,19 @@ export async function restartPreview(previewId: string, opts: RestartOptions = {
     }
 
     await setStatus("building");
-    const composeArgs = [
-      "compose",
-      ...composeFileArgs(settings.composePath),
-      "-f",
-      OVERRIDE_FILE,
-      "-p",
-      preview.composeProject,
-    ];
+    const compose = composeArgs(settings.composePath, preview.composeProject);
     if (resetVolumes) {
       // ボリューム破棄は `restart` では反映されないため down -v で作り直す(issue #58)。
       // イメージは既存のものを使うので --build は付けない(再ビルドしない)。
       log("Resetting volumes (docker compose down -v)...");
-      const downCode = await runCommand(
-        "docker",
-        [...composeArgs, "down", "-v", "--remove-orphans"],
-        {
-          cwd: dir,
-          onLine: log,
-          timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-        },
-      );
+      const downCode = await runCommand("docker", [...compose, "down", "-v", "--remove-orphans"], {
+        cwd: dir,
+        onLine: log,
+        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+      });
       if (downCode !== 0) throw new Error(`docker compose down exited with code ${downCode}`);
       log("Recreating containers (docker compose up -d)...");
-      const upCode = await runCommand("docker", [...composeArgs, "up", "-d"], {
+      const upCode = await runCommand("docker", [...compose, "up", "-d"], {
         cwd: dir,
         onLine: log,
         timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
@@ -783,7 +658,7 @@ export async function restartPreview(previewId: string, opts: RestartOptions = {
       if (upCode !== 0) throw new Error(`docker compose up exited with code ${upCode}`);
     } else {
       log("Restarting containers (docker compose restart)...");
-      const code = await runCommand("docker", [...composeArgs, "restart"], {
+      const code = await runCommand("docker", [...compose, "restart"], {
         cwd: dir,
         onLine: log,
         timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
