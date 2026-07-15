@@ -9,6 +9,15 @@ import { z } from "zod";
  * rate limits and enables access to private repositories.
  */
 const envSchema = z.object({
+  // Process role (issue #80): "orchestrator" runs the full server, "agent" runs
+  // the pulling build agent (no HTTP server, no DB, no WebUI).
+  SERVER_MODE: z.enum(["orchestrator", "agent"]).default("orchestrator"),
+
+  // Agent mode only: base URL of the orchestrator and the bearer token issued
+  // at registration time (shown once in the WebUI).
+  ORCHESTRATOR_URL: z.string().optional(),
+  AGENT_TOKEN: z.string().optional(),
+
   DATABASE_URL: z.string().default("file:./dev.db"),
 
   // HTTP server. Uses API_PORT (not the generic PORT) to avoid clashing with

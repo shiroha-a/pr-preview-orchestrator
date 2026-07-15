@@ -64,7 +64,8 @@ agentGatewayRoutes.get("/jobs", async (c) => {
     Math.max(Number.isFinite(waitSec) ? waitSec * 1000 : 20000, 0),
     MAX_POLL_WAIT_MS,
   );
-  const job = await claimNextRemoteBuild(agent.id, waitMs);
+  // 接続断のsignalを渡し、切断済みpollがジョブをclaimしてしまうのを防ぐ。
+  const job = await claimNextRemoteBuild(agent.id, waitMs, c.req.raw.signal);
   if (!job) return c.body(null, 204);
   return c.json({ job });
 });

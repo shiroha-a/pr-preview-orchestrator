@@ -179,6 +179,9 @@ model BuildAgent {
 - 不要になったもの: mTLS/内部CA/エンロール基盤、名前付きCloudflare Tunnel(独自ドメイン)、
   エージェント側cloudflared。プレビュー公開は現行Quick Tunnelのまま。
 - 初期リリースゴール: **Phase 3 まで**(リモートビルド+フォールバックのE2E)。
+- 2026-07-15 実装時追記: E2Eで「切断済みlong-poll waiterへのclaim払い出し→idleタイムアウト
+  まで停滞」を発見。対策として①pollのHTTP切断signalでwaiterを除去、②claim直後の
+  **初動タイムアウト30秒**(最初のログ受信で通常のidleタイムアウトへ切替)を追加。
 
 ## 10. 未確定事項(実装時に確定)
 

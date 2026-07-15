@@ -121,6 +121,51 @@ describe("remote build registry", () => {
     expect(job).toBeNull();
   });
 
+  it("does not hand a job to a disconnected long-poll waiter", async () => {
+    // 切断済み(abort)のpollがジョブをclaimすると、エージェント不在のまま
+    // idleタイムアウトまで停滞してしまう(E2Eで発見したバグの回帰テスト)。
+    const pollController = new AbortController();
+    const claim = claimNextRemoteBuild("agent1", 3000, pollController.signal);
+    pollController.abort();
+    await expect(claim).resolves.toBeNull();
+
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 40,
+      idleTimeoutMs: 5000,
+    });
+    // 切断済みwaiterが残っていない=claimされずclaimタイムアウトで落ちる。
+    await expect(build).rejects.toThrow(/No build agent claimed/);
+  });
+
+  it("fails fast when a claimed agent never reports any activity", async () => {
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 60000,
+      firstActivityTimeoutMs: 40,
+    });
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    expect(job).not.toBeNull();
+    // 初動タイムアウト(40ms)がフルのidleタイムアウト(60s)より先に効く。
+    await expect(build).rejects.toThrow(/no activity/);
+  });
+
+  it("switches to the full idle timeout after the first activity", async () => {
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 5000,
+      firstActivityTimeoutMs: 50,
+    });
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    // 初動タイムアウト前にログが届けば、以降はidleTimeoutMsで生存する。
+    expect(appendRemoteBuildLogs(job!.id, ["alive"])).toBe(true);
+    await new Promise((r) => setTimeout(r, 120));
+    expect(completeRemoteBuild(job!.id, true)).toBe(true);
+    await expect(build).resolves.toBeUndefined();
+  });
+
   it("hands each queued job to exactly one claimer", async () => {
     const build1 = runRemoteBuild(makePayload({ previewId: "p1" }), {
       onLine: () => {},

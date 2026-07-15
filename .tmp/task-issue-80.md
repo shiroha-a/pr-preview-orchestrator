@@ -33,13 +33,21 @@
 
 ## Phase 3: agentモード + E2E + フォールバック(初期リリース到達点)
 
-- [ ] `SERVER_MODE=agent`起動モード(pollループ+実行エンジン、HTTPサーバー/DB/WebUIなし)
-- [ ] エージェント: ジョブ取得 → SHAでcheckout → 注入 → `compose build` → save|gzip転送 → 完了報告
-- [ ] 本体: リモートビルド完了後の`docker load`→`compose up -d`接続
-- [ ] フォールバック実装(auto/remote/local、エージェント死亡時のジョブタイムアウト→failed→local)
-- [ ] Dockerfile(docker CLI + git同梱)とイメージビルド
-- [ ] E2E確認(単一エージェント: リモートビルド成功/失敗/不在フォールバック)
-- [ ] READMEにエージェントのセットアップ手順追記
+- [x] `SERVER_MODE=agent`起動モード(pollループ+実行エンジン、HTTPサーバー/DB/WebUIなし。
+      index.tsは動的importで分岐しagentがPrismaを読み込まない)
+- [x] エージェント: ジョブ取得 → SHAでcheckout → 注入 → `compose build` →
+      built imagesのみ選別(`compose config --format json`)→ save|gzip転送 → 完了報告
+- [x] 本体: リモートビルド完了後の`docker load`→`compose up -d`接続
+- [x] フォールバック実装(auto/remote/local、claim/初動/idleタイムアウト→failed→local)
+- [x] Dockerfile(docker CLI + compose plugin + git同梱、orchestrator/agent両用)+ .dockerignore
+- [x] E2E確認(shiroha-a/growbotで実施):
+  - [x] リモートビルド成功(dispatch→claim→clone→overlay注入→build→転送→load→up -d→running)
+  - [x] claim timeoutフォールバック(オンライン表示・無応答→15秒でローカルへ縮退→running)
+  - [x] オフライン+auto(リモートスキップ→直接ローカル→running)
+  - [x] オフライン+remote(明示エラーで失敗)
+- [x] E2Eで発見したバグ修正: 切断済みlong-pollのwaiterがジョブをclaimして停滞する問題
+      (HTTP切断signalでwaiter除去 + claim後の初動タイムアウト30秒)+ 回帰テスト4件
+- [x] READMEに環境変数と外部ビルドサーバーのセットアップ手順を追記
 
 ## Phase 4(初期リリース後・別PR)
 

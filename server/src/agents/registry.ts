@@ -52,6 +52,7 @@ interface RemoteJob {
   claimTimer: ReturnType<typeof setTimeout> | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
   idleTimeoutMs: number;
+  firstActivityTimeoutMs: number;
   cleanupAbort: () => void;
 }
 
@@ -79,16 +80,16 @@ function finishJob(job: RemoteJob, outcome: { ok: true } | { ok: false; error: E
   else job.reject(outcome.error);
 }
 
-function armIdleTimer(job: RemoteJob): void {
+function armIdleTimer(job: RemoteJob, timeoutMs = job.idleTimeoutMs): void {
   if (job.idleTimer) clearTimeout(job.idleTimer);
   job.idleTimer = setTimeout(() => {
     finishJob(job, {
       ok: false,
       error: new Error(
-        `Remote build timed out: no activity from the build agent for ${job.idleTimeoutMs}ms`,
+        `Remote build timed out: no activity from the build agent for ${timeoutMs}ms`,
       ),
     });
-  }, job.idleTimeoutMs);
+  }, timeoutMs);
 }
 
 function claimJob(job: RemoteJob, agentId: string): ClaimedJob {
@@ -98,7 +99,11 @@ function claimJob(job: RemoteJob, agentId: string): ClaimedJob {
     clearTimeout(job.claimTimer);
     job.claimTimer = null;
   }
-  armIdleTimer(job);
+  // claim直後は短い初動タイムアウトで監視する。claim後に応答が届かないケース
+  // (エージェントのクラッシュ、切断済みpollへの払い出し)で、フルのidle
+  // タイムアウトまで待たずに素早くフォールバックさせるため。最初のログ受信で
+  // 通常のidleタイムアウトに切り替わる。
+  armIdleTimer(job, Math.min(job.firstActivityTimeoutMs, job.idleTimeoutMs));
   return { id: job.id, payload: job.payload };
 }
 
@@ -126,7 +131,15 @@ export interface RunRemoteBuildOptions {
   claimTimeoutMs: number;
   /** Idle timeout after claim: no logs/upload/completion for this long fails it. */
   idleTimeoutMs: number;
+  /**
+   * Max wait between the claim and the agent's first sign of life. Defaults to
+   * 30s: far shorter than idleTimeoutMs, so a claim handed to a dead agent
+   * fails fast instead of stalling a full build timeout.
+   */
+  firstActivityTimeoutMs?: number;
 }
+
+const DEFAULT_FIRST_ACTIVITY_TIMEOUT_MS = 30000;
 
 /**
  * Queue a build for a pulling agent and resolve when the agent reports success
@@ -154,6 +167,7 @@ export function runRemoteBuild(
       claimTimer: null,
       idleTimer: null,
       idleTimeoutMs: opts.idleTimeoutMs,
+      firstActivityTimeoutMs: opts.firstActivityTimeoutMs ?? DEFAULT_FIRST_ACTIVITY_TIMEOUT_MS,
       cleanupAbort: () => {},
     };
 
@@ -180,19 +194,42 @@ export function runRemoteBuild(
 
 /**
  * Long-poll for the next queued build job. Resolves with a claimed job, or null
- * after waitMs when nothing arrives (the agent then polls again).
+ * after waitMs when nothing arrives (the agent then polls again). Pass the HTTP
+ * request's abort signal so a dead connection stops claiming jobs: a waiter
+ * whose poll was disconnected must not receive work it can never act on.
  */
-export function claimNextRemoteBuild(agentId: string, waitMs: number): Promise<ClaimedJob | null> {
+export function claimNextRemoteBuild(
+  agentId: string,
+  waitMs: number,
+  signal?: AbortSignal,
+): Promise<ClaimedJob | null> {
   return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(null);
+      return;
+    }
+    const remove = () => {
+      const idx = waiters.indexOf(waiter);
+      if (idx >= 0) waiters.splice(idx, 1);
+    };
+    const onAbort = () => {
+      clearTimeout(waiter.timer);
+      remove();
+      resolve(null);
+    };
     const waiter: Waiter = {
       agentId,
-      resolve,
+      resolve: (job) => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve(job);
+      },
       timer: setTimeout(() => {
-        const idx = waiters.indexOf(waiter);
-        if (idx >= 0) waiters.splice(idx, 1);
+        remove();
+        signal?.removeEventListener("abort", onAbort);
         resolve(null);
       }, waitMs),
     };
+    signal?.addEventListener("abort", onAbort, { once: true });
     waiters.push(waiter);
     drainQueue();
   });
