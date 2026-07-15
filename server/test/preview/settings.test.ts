@@ -20,6 +20,7 @@ function makeRepo(overrides: Partial<Repository> = {}): Repository {
     fileRewrites: null,
     overlayFiles: null,
     resetVolumes: false,
+    buildMode: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -37,6 +38,7 @@ function makeProfile(overrides: Partial<SettingsProfile> = {}): SettingsProfile 
     fileRewrites: null,
     overlayFiles: null,
     resetVolumes: null,
+    buildMode: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
@@ -81,6 +83,7 @@ describe("resolveSettings", () => {
       fileRewrites: null,
       overlayFiles: [],
       resetVolumes: false,
+      buildMode: null,
     });
   });
 
@@ -98,7 +101,20 @@ describe("resolveSettings", () => {
       fileRewrites: '[{"file":"a"}]',
       overlayFiles: [],
       resetVolumes: true,
+      buildMode: null,
     });
+  });
+
+  it("buildModeはプロファイル→リポジトリ→null(グローバル既定)の順に解決される(issue #80)", () => {
+    expect(resolveSettings(makeRepo(), null).buildMode).toBeNull();
+    expect(resolveSettings(makeRepo({ buildMode: "remote" }), null).buildMode).toBe("remote");
+    expect(
+      resolveSettings(makeRepo({ buildMode: "remote" }), makeProfile({ buildMode: "local" }))
+        .buildMode,
+    ).toBe("local");
+    expect(resolveSettings(makeRepo({ buildMode: "remote" }), makeProfile()).buildMode).toBe(
+      "remote",
+    );
   });
 
   it("プロファイルのresetVolumes=falseは既定trueを上書きする", () => {

@@ -17,18 +17,19 @@
 
 ## Phase 2: ジョブAPI + BuildAgentモデル + WebUI
 
-- [ ] Prisma: `BuildAgent`モデル追加(name/tokenHash/lastSeenAt/enabled)+ migration
-- [ ] Repository/SettingsProfileに`buildMode`(auto/remote/local)追加 + migration
-- [ ] エージェント認証ミドルウェア(トークンハッシュ照合、Basic認証とは別系統)
-- [ ] ジョブAPI(エージェント向け)
-  - [ ] `GET /api/agent/jobs`(long-poll + 原子的claim)
-  - [ ] `POST /api/agent/jobs/:id/logs`(ログbatch ingest → 既存SSEへ中継)
-  - [ ] `POST /api/agent/jobs/:id/image`(docker save|gzipストリーム受領 → docker load)
-  - [ ] `POST /api/agent/jobs/:id/complete`(成功/失敗報告)
-- [ ] エージェント管理API(登録=トークン発行(一度だけ表示)/一覧/削除/enabled切替)
-- [ ] WebUI: 設定画面にビルドサーバー一覧(online/offline)+ 追加(ワンライナー表示)
-- [ ] WebUI: リポジトリ/プロファイル設定に`buildMode`選択を追加
-- [ ] テスト追加(claim原子性・認証・buildMode解決)
+- [x] Prisma: `BuildAgent`モデル追加(name/tokenHash/lastSeenAt/enabled)+ migration
+- [x] Repository/SettingsProfileに`buildMode`(auto/remote/local)追加 + migration
+- [x] エージェント認証ミドルウェア(トークンハッシュ照合、Basic認証とは別系統)
+- [x] ジョブAPI(エージェント向け)
+  - [x] `GET /api/agent/jobs`(long-poll + claim。in-memoryレジストリ`agents/registry.ts`)
+  - [x] `POST /api/agent/jobs/:id/logs`(ログbatch ingest → 既存SSEへ中継)
+  - [x] `POST /api/agent/jobs/:id/image`(docker save|gzipストリーム受領 → docker load)
+  - [x] `POST /api/agent/jobs/:id/complete`(成功/失敗報告)
+- [x] エージェント管理API(登録=トークン発行(一度だけ表示)/一覧/削除/enabled切替)
+- [x] buildPreviewへのリモートビルド統合(auto/remote/local + フォールバック)※Phase 3前倒し
+- [x] WebUI: 設定画面にビルドサーバー一覧(online/offline)+ 追加(ワンライナー表示)
+- [x] WebUI: リポジトリ/プロファイル設定に`buildMode`選択を追加
+- [x] テスト追加(registry 8件・agents routes 7件・buildMode解決1件。計98件パス)
 
 ## Phase 3: agentモード + E2E + フォールバック(初期リリース到達点)
 

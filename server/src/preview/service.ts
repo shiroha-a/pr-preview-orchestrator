@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { runRemoteBuild } from "../agents/registry";
+import { hasOnlineAgent } from "../agents/service";
 import { prisma } from "../db/client";
 import type { Prisma, Repository } from "../generated/prisma/client";
 import { env } from "../env";
@@ -311,19 +313,70 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       );
     }
 
-    // ビルドと起動を分離する(issue #80)。従来の `up -d --build` と結果は等価だが、
-    // ビルド工程を実行エンジンに切り出すことで将来リモートビルドへ差し替え可能にする。
-    log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
-    await buildImages({
-      dir,
-      composePath: settings.composePath,
-      composeProject: project,
-      noCache,
-      timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-      mask,
-      signal,
-      onLine: log,
-    });
+    // ビルド工程は buildMode に応じて外部ビルドサーバーへ委譲できる(issue #80)。
+    // リモート成功時はイメージが docker load 済みなので、後続の up -d がそのまま使う。
+    const buildMode = settings.buildMode ?? env.BUILD_MODE_DEFAULT;
+    let remoteBuilt = false;
+    if (buildMode !== "local") {
+      const agentOnline = await hasOnlineAgent();
+      if (!agentOnline && buildMode === "remote") {
+        throw new Error(
+          "ビルドモードがremoteに設定されていますが、オンラインの外部ビルドサーバーがありません。",
+        );
+      }
+      if (agentOnline) {
+        try {
+          log("Dispatching image build to a remote build agent...");
+          await runRemoteBuild(
+            {
+              previewId,
+              owner: target.owner,
+              name: target.name,
+              fetchRef: target.fetchRef,
+              sha,
+              composeProject: project,
+              composePath: settings.composePath,
+              overlayFiles: settings.overlayFiles,
+              fileRewrites: settings.fileRewrites,
+              webService: settings.webService,
+              internalPort: settings.internalPort,
+              hostPort,
+              templateVars,
+              noCache,
+              githubToken: token,
+            },
+            {
+              onLine: log,
+              signal,
+              claimTimeoutMs: env.REMOTE_BUILD_CLAIM_TIMEOUT_MS,
+              idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+            },
+          );
+          remoteBuilt = true;
+          log("Remote build finished; images are loaded locally.");
+        } catch (e) {
+          if (e instanceof BuildCancelledError || signal.aborted) throw e;
+          const message = e instanceof Error ? e.message : String(e);
+          // remote指定はフォールバックせず失敗させる。autoはローカルビルドへ縮退する。
+          if (buildMode === "remote") throw new Error(`リモートビルドに失敗しました: ${message}`);
+          log(`WARN: remote build failed (${message}); falling back to a local build`);
+        }
+      }
+    }
+
+    if (!remoteBuilt) {
+      log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
+      await buildImages({
+        dir,
+        composePath: settings.composePath,
+        composeProject: project,
+        noCache,
+        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+        mask,
+        signal,
+        onLine: log,
+      });
+    }
 
     log("Running docker compose up -d...");
     const code = await runCommand(

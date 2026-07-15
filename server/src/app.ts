@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 
 import { dbBasicAuth, getCachedUserCount } from "./auth/middleware";
 import { env, hasGitHubToken } from "./env";
+import { agentGatewayRoutes, agentsAdminRoutes } from "./routes/agents";
 import { dockerRoutes } from "./routes/docker";
 import { metricsRoutes } from "./routes/metrics";
 import { previewRoutes } from "./routes/preview";
@@ -26,6 +27,8 @@ export function createApp() {
   app.get("/api/health", (c) => c.json({ ok: true }));
   // GitHub webhooks authenticate via HMAC signature, not basic auth.
   app.route("/api/github/webhook", webhookRoutes);
+  // Build agents authenticate with their own bearer token (issue #80).
+  app.route("/api/agent", agentGatewayRoutes);
 
   // --- Admin basic-auth: protects everything below when configured ---
   app.use("*", dbBasicAuth());
@@ -42,10 +45,14 @@ export function createApp() {
         workspacesDir: env.WORKSPACES_DIR,
         tunnel: env.PREVIEW_TUNNEL,
       },
+      // 外部ビルドサーバーの既定モード(issue #80)。設定画面の表示に使う。
+      buildModeDefault: env.BUILD_MODE_DEFAULT,
     }),
   );
 
   app.route("/api/repositories", repositoriesRoutes);
+  // 外部ビルドサーバーの管理(issue #80)。
+  app.route("/api/agents", agentsAdminRoutes);
   app.route("/api/preview", previewRoutes);
   app.route("/api/metrics", metricsRoutes);
   app.route("/api/docker", dockerRoutes);

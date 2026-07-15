@@ -21,6 +21,11 @@ export interface EffectiveSettings {
   /** Resolved overlay files: repository defaults merged with the profile (issue #56). */
   overlayFiles: OverlayFile[];
   resetVolumes: boolean;
+  /**
+   * Where images are built (issue #80): "auto" / "remote" / "local", or null to
+   * inherit the global default (BUILD_MODE_DEFAULT).
+   */
+  buildMode: string | null;
 }
 
 /**
@@ -64,6 +69,7 @@ export function resolveSettings(
         ? mergeOverlayFiles(defaultOverlays, parseProfileOverlayEntries(profile.overlayFiles))
         : defaultOverlays,
     resetVolumes: profile?.resetVolumes ?? repo.resetVolumes,
+    buildMode: profile?.buildMode ?? repo.buildMode,
   };
 }
 

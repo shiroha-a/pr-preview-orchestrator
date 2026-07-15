@@ -60,6 +60,19 @@ const envSchema = z.object({
   // different previews run concurrently; same-preview jobs stay serialized.
   PREVIEW_JOB_CONCURRENCY: z.coerce.number().int().min(1).default(3),
 
+  // Where images are built when neither the repository nor the profile sets a
+  // buildMode (issue #80): "auto" uses a remote build agent when one is online
+  // and falls back to local, "remote" requires an agent, "local" never
+  // dispatches remotely.
+  BUILD_MODE_DEFAULT: z.enum(["auto", "remote", "local"]).default("auto"),
+
+  // An agent counts as online while its last poll is within this window.
+  AGENT_ONLINE_THRESHOLD_MS: z.coerce.number().int().default(90000),
+
+  // How long a queued remote build may wait for an agent to claim it before
+  // falling back to a local build (issue #80).
+  REMOTE_BUILD_CLAIM_TIMEOUT_MS: z.coerce.number().int().default(30000),
+
   // Directory of the built web SPA, served by Hono in production (relative to server/).
   WEB_DIST_DIR: z.string().default("../web/dist"),
 });
