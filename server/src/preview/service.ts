@@ -179,6 +179,51 @@ function hostnameOf(url: string, fallback: string): string {
  * - `keepTunnel`: reuse the existing tunnel/URL instead of creating a new one
  *   (keeps the app's baked-in URL valid; avoids DB regeneration for e.g. Misskey).
  */
+/** Inputs for the build-step decision (issue #80). Exported for tests. */
+export interface BuildStepOptions {
+  /** Effective build mode: "auto" | "remote" | "local". */
+  buildMode: string;
+  /** Whether at least one enabled agent is currently online. */
+  agentOnline: boolean;
+  /** Queue the build on a remote agent and resolve when its images are loaded. */
+  dispatchRemote: () => Promise<void>;
+  /** Run `docker compose build` locally. */
+  buildLocal: () => Promise<void>;
+  log: (line: string) => void;
+}
+
+/**
+ * Decide where the image build runs and execute it (issue #80). "remote"
+ * requires an online agent and never falls back; "auto" prefers a remote agent
+ * but falls back to a local build when none is online or the dispatch fails.
+ * Cancellation (BuildCancelledError) always propagates unchanged.
+ */
+export async function executeBuildStep(opts: BuildStepOptions): Promise<void> {
+  const { buildMode, agentOnline, dispatchRemote, buildLocal, log } = opts;
+  if (buildMode !== "local") {
+    if (!agentOnline && buildMode === "remote") {
+      throw new Error(
+        "ビルドモードがremoteに設定されていますが、オンラインの外部ビルドサーバーがありません。",
+      );
+    }
+    if (agentOnline) {
+      try {
+        log("Dispatching image build to a remote build agent...");
+        await dispatchRemote();
+        log("Remote build finished; images are loaded locally.");
+        return;
+      } catch (e) {
+        if (e instanceof BuildCancelledError) throw e;
+        const message = e instanceof Error ? e.message : String(e);
+        // remote指定はフォールバックせず失敗させる。autoはローカルビルドへ縮退する。
+        if (buildMode === "remote") throw new Error(`リモートビルドに失敗しました: ${message}`);
+        log(`WARN: remote build failed (${message}); falling back to a local build`);
+      }
+    }
+  }
+  await buildLocal();
+}
+
 export interface BuildOptions {
   noCache?: boolean;
   resetVolumes?: boolean;
@@ -235,6 +280,9 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
         "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
       );
     }
+    // narrowing後に束縛しておく(クロージャ内では絞り込みが効かないため)。
+    const webService = settings.webService;
+    const internalPort = settings.internalPort;
     if (loaded.profile) {
       log(`Using settings profile "${loaded.profile.name}"`);
     }
@@ -294,9 +342,9 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       dir,
       overlayFiles: settings.overlayFiles,
       fileRewrites: settings.fileRewrites,
-      webService: settings.webService,
+      webService,
       hostPort,
-      internalPort: settings.internalPort,
+      internalPort,
       templateVars,
       onLine: log,
     });
@@ -316,67 +364,54 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     // ビルド工程は buildMode に応じて外部ビルドサーバーへ委譲できる(issue #80)。
     // リモート成功時はイメージが docker load 済みなので、後続の up -d がそのまま使う。
     const buildMode = settings.buildMode ?? env.BUILD_MODE_DEFAULT;
-    let remoteBuilt = false;
-    if (buildMode !== "local") {
-      const agentOnline = await hasOnlineAgent();
-      if (!agentOnline && buildMode === "remote") {
-        throw new Error(
-          "ビルドモードがremoteに設定されていますが、オンラインの外部ビルドサーバーがありません。",
-        );
-      }
-      if (agentOnline) {
-        try {
-          log("Dispatching image build to a remote build agent...");
-          await runRemoteBuild(
-            {
-              previewId,
-              owner: target.owner,
-              name: target.name,
-              fetchRef: target.fetchRef,
-              sha,
-              composeProject: project,
-              composePath: settings.composePath,
-              overlayFiles: settings.overlayFiles,
-              fileRewrites: settings.fileRewrites,
-              webService: settings.webService,
-              internalPort: settings.internalPort,
-              hostPort,
-              templateVars,
-              noCache,
-              githubToken: token,
-            },
-            {
-              onLine: log,
-              signal,
-              claimTimeoutMs: env.REMOTE_BUILD_CLAIM_TIMEOUT_MS,
-              idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-            },
-          );
-          remoteBuilt = true;
-          log("Remote build finished; images are loaded locally.");
-        } catch (e) {
-          if (e instanceof BuildCancelledError || signal.aborted) throw e;
-          const message = e instanceof Error ? e.message : String(e);
-          // remote指定はフォールバックせず失敗させる。autoはローカルビルドへ縮退する。
-          if (buildMode === "remote") throw new Error(`リモートビルドに失敗しました: ${message}`);
-          log(`WARN: remote build failed (${message}); falling back to a local build`);
-        }
-      }
-    }
-
-    if (!remoteBuilt) {
-      log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
-      await buildImages({
-        dir,
-        composePath: settings.composePath,
-        composeProject: project,
-        noCache,
-        timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-        mask,
-        signal,
-        onLine: log,
-      });
-    }
+    await executeBuildStep({
+      buildMode,
+      agentOnline: buildMode === "local" ? false : await hasOnlineAgent(),
+      log,
+      dispatchRemote: () =>
+        runRemoteBuild(
+          {
+            previewId,
+            owner: target.owner,
+            name: target.name,
+            fetchRef: target.fetchRef,
+            sha,
+            composeProject: project,
+            composePath: settings.composePath,
+            overlayFiles: settings.overlayFiles,
+            fileRewrites: settings.fileRewrites,
+            webService,
+            internalPort,
+            hostPort,
+            templateVars,
+            noCache,
+            githubToken: token,
+          },
+          {
+            onLine: log,
+            signal,
+            claimTimeoutMs: env.REMOTE_BUILD_CLAIM_TIMEOUT_MS,
+            idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+            // remote指定はフォールバックしないため、オンラインのエージェントが居る限り
+            // claim待ちを続ける(直列処理中のビジー待ち)。オフラインになれば失効する。
+            // autoはフォールバックがあるので早期にローカルへ縮退する(issue #80レビュー指摘1)。
+            shouldKeepWaiting: buildMode === "remote" ? () => hasOnlineAgent() : undefined,
+          },
+        ),
+      buildLocal: async () => {
+        log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
+        await buildImages({
+          dir,
+          composePath: settings.composePath,
+          composeProject: project,
+          noCache,
+          timeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+          mask,
+          signal,
+          onLine: log,
+        });
+      },
+    });
 
     log("Running docker compose up -d...");
     const code = await runCommand(

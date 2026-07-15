@@ -49,9 +49,28 @@
       (HTTP切断signalでwaiter除去 + claim後の初動タイムアウト30秒)+ 回帰テスト4件
 - [x] READMEに環境変数と外部ビルドサーバーのセットアップ手順を追記
 
+## レビュー対応(PR #81)
+
+- [x] 指摘1: remote+エージェントビジーでの不当失敗 → `shouldKeepWaiting`フックを追加し、
+      remoteモードはオンラインエージェントが居る限りclaim待ちを継続(オフライン化で失効)
+- [x] 指摘2: `docker load`のEPIPEクラッシュ → `child.stdin`のerrorハンドラ追加 +
+      入力エラー時のSIGKILLをcode -1として明示(`code ?? 0`の成功誤判定を修正)
+- [x] 指摘2: agent側`uploadImages`のEPIPE対策(gzip/stdoutのerrorハンドラ + fetch失敗時の
+      docker save kill)+ ワンライナーに`--restart unless-stopped`追加(README/WebUI両方)
+- [x] 指摘3: ジョブ操作のagentId一致検証(logs/image/complete/touch)
+- [x] 指摘3: READMEにHTTPS推奨(LAN外は必須)を明記
+- [x] 指摘4: `uploadImages`の410チェックを終了コード確認より先に
+- [x] 指摘4: `LogShipper.flush`をチェーン直列化(完了報告が最終ログを追い越さない)
+- [x] 指摘4: image受領エンドポイントがload中のジョブ失効時に410を返す
+- [x] 指摘4: Dockerfileのレイヤーキャッシュ(package*.json+prisma先行COPY)
+- [x] 指摘4: 登録APIのTOCTOU(P2002捕捉で400)
+- [x] 指摘4: registryテストをfake timers化(flake対策)
+- [x] カバレッジ: ビルド分岐を`executeBuildStep`として抽出し7ケースをユニットテスト化
+
 ## Phase 4(初期リリース後・別PR)
 
 - [ ] エージェント側ビルドキャッシュ掃除(定期prune or 本体指示)
 - [ ] 転送最適化(built imagesのみ選別/圧縮方式)
+- [ ] イメージ受領時のtar manifest検証(期待タグのみ許可。レビュー指摘3のハードニング)
 - [ ] キュー/健全性のUI改善
 - [ ] 複数エージェントのスケジューリング

@@ -76,7 +76,8 @@ const logsSchema = z.object({ lines: z.array(z.string()).max(1000) });
 agentGatewayRoutes.post("/jobs/:id/logs", async (c) => {
   const parsed = logsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
-  const ok = appendRemoteBuildLogs(c.req.param("id"), parsed.data.lines);
+  // claimしたエージェント本人のみ操作できる(issue #80レビュー指摘3)。
+  const ok = appendRemoteBuildLogs(c.req.param("id"), parsed.data.lines, c.get("agent").id);
   // 410: ジョブは失効済み(完了/キャンセル/タイムアウト)。エージェントはビルドを中止する。
   if (!ok) return c.json({ error: "job gone" }, 410);
   return c.json({ ok: true });
@@ -89,7 +90,8 @@ agentGatewayRoutes.post("/jobs/:id/logs", async (c) => {
  */
 agentGatewayRoutes.post("/jobs/:id/image", async (c) => {
   const jobId = c.req.param("id");
-  const job = getRemoteBuild(jobId);
+  const agentId = c.get("agent").id;
+  const job = getRemoteBuild(jobId, agentId);
   if (!job) return c.json({ error: "job gone" }, 410);
   const body = c.req.raw.body;
   if (!body) return c.json({ error: "empty body" }, 400);
@@ -98,16 +100,18 @@ agentGatewayRoutes.post("/jobs/:id/image", async (c) => {
   const result = await dockerLoadFromStream(stream, {
     idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
     // 転送中はチャンク受信でジョブを生存扱いにする(ログは流れないため)。
-    onChunk: () => void touchRemoteBuild(jobId),
+    onChunk: () => void touchRemoteBuild(jobId, agentId),
   });
   const lines = result.output
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  appendRemoteBuildLogs(jobId, lines);
+  // load中にジョブが失効していたら410を返し、エージェントに中止を伝える。
+  const alive = appendRemoteBuildLogs(jobId, lines, agentId);
   if (result.code !== 0) {
     return c.json({ error: `docker load exited with code ${result.code}` }, 500);
   }
+  if (!alive) return c.json({ error: "job gone" }, 410);
   return c.json({ ok: true });
 });
 
@@ -120,7 +124,12 @@ const completeSchema = z.object({
 agentGatewayRoutes.post("/jobs/:id/complete", async (c) => {
   const parsed = completeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
-  const ok = completeRemoteBuild(c.req.param("id"), parsed.data.ok, parsed.data.error);
+  const ok = completeRemoteBuild(
+    c.req.param("id"),
+    parsed.data.ok,
+    parsed.data.error,
+    c.get("agent").id,
+  );
   if (!ok) return c.json({ error: "job gone" }, 410);
   return c.json({ ok: true });
 });
@@ -149,14 +158,21 @@ agentsAdminRoutes.post("/", async (c) => {
   const parsed = createAgentSchema.safeParse(await c.req.json().catch(() => null));
   const name = parsed.success ? parsed.data.name.trim() : "";
   if (!name) return c.json({ error: "ビルドサーバー名を入力してください。" }, 400);
-  const existing = await prisma.buildAgent.findUnique({ where: { name } });
-  if (existing) return c.json({ error: "同名のビルドサーバーが既に登録されています。" }, 400);
-  const { agent, token } = await createAgent(name);
-  // トークンはこのレスポンスでのみ平文を返す(DBにはハッシュのみ保存)。
-  return c.json({
-    agent: { id: agent.id, name: agent.name, enabled: agent.enabled },
-    token,
-  });
+  try {
+    const { agent, token } = await createAgent(name);
+    // トークンはこのレスポンスでのみ平文を返す(DBにはハッシュのみ保存)。
+    return c.json({
+      agent: { id: agent.id, name: agent.name, enabled: agent.enabled },
+      token,
+    });
+  } catch (e) {
+    // 事前チェックではなくユニーク制約違反(P2002)で判定する。事前チェックだと
+    // 同時登録の競合時に500になる(issue #80レビュー指摘4)。
+    if ((e as { code?: string }).code === "P2002") {
+      return c.json({ error: "同名のビルドサーバーが既に登録されています。" }, 400);
+    }
+    throw e;
+  }
 });
 
 const patchAgentSchema = z.object({ enabled: z.boolean() });

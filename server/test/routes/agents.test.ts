@@ -173,6 +173,44 @@ describe("agent gateway job flow", () => {
     expect(lines).toEqual(["step 1", "step 2"]);
   });
 
+  it("rejects logs/complete from an agent that did not claim the job", async () => {
+    // ジョブをclaimしたエージェント本人のみ操作できる(issue #80レビュー指摘3)。
+    const app = createApp();
+    const { token } = await registerAgent(app, "box1");
+    const { token: otherToken } = await registerAgent(app, "box2");
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 5000,
+    });
+    const claim = await app.request("/api/agent/jobs?wait=5", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const { job } = (await claim.json()) as { job: { id: string } };
+
+    const logs = await app.request(`/api/agent/jobs/${job.id}/logs`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${otherToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ lines: ["spoofed"] }),
+    });
+    expect(logs.status).toBe(410);
+    const complete = await app.request(`/api/agent/jobs/${job.id}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${otherToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ok: true }),
+    });
+    expect(complete.status).toBe(410);
+
+    // 本人からのcompleteは通る。
+    const own = await app.request(`/api/agent/jobs/${job.id}/complete`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ok: true }),
+    });
+    expect(own.status).toBe(200);
+    await expect(build).resolves.toBeUndefined();
+  });
+
   it("returns 410 for logs/complete on an expired job", async () => {
     const app = createApp();
     const { token } = await registerAgent(app);

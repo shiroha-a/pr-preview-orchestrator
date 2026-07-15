@@ -137,6 +137,13 @@ export interface RunRemoteBuildOptions {
    * fails fast instead of stalling a full build timeout.
    */
   firstActivityTimeoutMs?: number;
+  /**
+   * Consulted when the claim timeout fires; return true to re-arm the timer
+   * and keep waiting. buildMode=remote passes an online-agent check here so a
+   * busy (serially building) agent does not fail queued jobs, while an agent
+   * that went offline still expires them. Absent → fail on the first timeout.
+   */
+  shouldKeepWaiting?: () => Promise<boolean> | boolean;
 }
 
 const DEFAULT_FIRST_ACTIVITY_TIMEOUT_MS = 30000;
@@ -179,12 +186,29 @@ export function runRemoteBuild(
       job.cleanupAbort = () => opts.signal?.removeEventListener("abort", onAbort);
     }
 
-    job.claimTimer = setTimeout(() => {
+    // claimタイムアウト時、shouldKeepWaitingがtrueを返す限りタイマーを張り直す
+    // (ビジー中のオンラインエージェント待ち)。判定中にclaim/完了された場合は何もしない。
+    const onClaimTimeout = async () => {
+      if (job.state !== "queued") return;
+      let keepWaiting = false;
+      if (opts.shouldKeepWaiting) {
+        try {
+          keepWaiting = await opts.shouldKeepWaiting();
+        } catch {
+          keepWaiting = false;
+        }
+      }
+      if (job.state !== "queued") return;
+      if (keepWaiting) {
+        job.claimTimer = setTimeout(() => void onClaimTimeout(), opts.claimTimeoutMs);
+        return;
+      }
       finishJob(job, {
         ok: false,
         error: new Error(`No build agent claimed the job within ${opts.claimTimeoutMs}ms`),
       });
-    }, opts.claimTimeoutMs);
+    };
+    job.claimTimer = setTimeout(() => void onClaimTimeout(), opts.claimTimeoutMs);
 
     jobs.set(job.id, job);
     queue.push(job.id);
@@ -236,29 +260,41 @@ export function claimNextRemoteBuild(
 }
 
 /**
+ * Look up a claimed job, verifying (when agentId is given) that the caller is
+ * the agent the job was handed to. Job ids are unguessable UUIDs, but the
+ * ownership check keeps multi-agent deployments honest at no cost.
+ */
+function claimedJobFor(jobId: string, agentId?: string): RemoteJob | null {
+  const job = jobs.get(jobId);
+  if (!job || job.state !== "claimed") return null;
+  if (agentId !== undefined && job.agentId !== agentId) return null;
+  return job;
+}
+
+/**
  * Forward a batch of build log lines from the agent. Returns false when the job
  * no longer exists (finished/cancelled) so the agent aborts its build.
  */
-export function appendRemoteBuildLogs(jobId: string, lines: string[]): boolean {
-  const job = jobs.get(jobId);
-  if (!job || job.state !== "claimed") return false;
+export function appendRemoteBuildLogs(jobId: string, lines: string[], agentId?: string): boolean {
+  const job = claimedJobFor(jobId, agentId);
+  if (!job) return false;
   armIdleTimer(job);
   for (const line of lines) job.onLine(line);
   return true;
 }
 
 /** Keep a claimed job alive during a long image upload. False when gone. */
-export function touchRemoteBuild(jobId: string): boolean {
-  const job = jobs.get(jobId);
-  if (!job || job.state !== "claimed") return false;
+export function touchRemoteBuild(jobId: string, agentId?: string): boolean {
+  const job = claimedJobFor(jobId, agentId);
+  if (!job) return false;
   armIdleTimer(job);
   return true;
 }
 
 /** The claimed job for id, or null (used by the image upload endpoint). */
-export function getRemoteBuild(jobId: string): ClaimedJob | null {
-  const job = jobs.get(jobId);
-  if (!job || job.state !== "claimed") return null;
+export function getRemoteBuild(jobId: string, agentId?: string): ClaimedJob | null {
+  const job = claimedJobFor(jobId, agentId);
+  if (!job) return null;
   return { id: job.id, payload: job.payload };
 }
 
@@ -267,9 +303,14 @@ export function getRemoteBuild(jobId: string): ClaimedJob | null {
  * ok=false rejects it (auto mode then falls back to a local build). Returns
  * false when the job no longer exists.
  */
-export function completeRemoteBuild(jobId: string, ok: boolean, error?: string): boolean {
-  const job = jobs.get(jobId);
-  if (!job || job.state !== "claimed") return false;
+export function completeRemoteBuild(
+  jobId: string,
+  ok: boolean,
+  error?: string,
+  agentId?: string,
+): boolean {
+  const job = claimedJobFor(jobId, agentId);
+  if (!job) return false;
   finishJob(
     job,
     ok ? { ok: true } : { ok: false, error: new Error(error || "Remote build failed") },

@@ -15,10 +15,16 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# インストールとビルドを1レイヤーで実行する(postinstallのprisma generateが
-# server/prisma/schema.prisma を要求するため、先に全ソースをコピーする)。
+# 依存インストールをソースと分離してレイヤーキャッシュを効かせる。postinstallの
+# prisma generate が schema と prisma.config.ts を要求するため、先にコピーする。
+COPY package.json package-lock.json ./
+COPY server/package.json server/prisma.config.ts ./server/
+COPY web/package.json ./web/
+COPY server/prisma ./server/prisma
+RUN npm ci --include=dev
+
 COPY . .
-RUN npm ci --include=dev && npm run build
+RUN npm run build
 
 ENV NODE_ENV=production
 ENV WORKSPACES_DIR=/data/workspaces

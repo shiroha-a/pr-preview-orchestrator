@@ -57,7 +57,9 @@ function authHeaders(cfg: AgentConfig): Record<string, string> {
 class LogShipper {
   private buffer: string[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private sending = false;
+  // 送信をチェーンで直列化する。flush()の戻りは進行中の送信も含めて完了を待つ
+  // ため、成功時の最終flush→complete報告の順序が保証される(issue #80レビュー指摘4)。
+  private chain: Promise<void> = Promise.resolve();
   gone = false;
 
   constructor(
@@ -76,14 +78,17 @@ class LogShipper {
     }
   }
 
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    // 送信中の再入は順序が乱れるためスキップする(残りは次のflushが拾う)。
-    if (this.sending || this.gone || this.buffer.length === 0) return;
-    this.sending = true;
+    this.chain = this.chain.then(() => this.send());
+    return this.chain;
+  }
+
+  private async send(): Promise<void> {
+    if (this.gone || this.buffer.length === 0) return;
     const lines = this.buffer.splice(0);
     try {
       const res = await fetch(`${this.cfg.baseUrl}/api/agent/jobs/${this.jobId}/logs`, {
@@ -97,9 +102,6 @@ class LogShipper {
       }
     } catch {
       // 一時的な送信失敗はログ欠落として許容する(ビルド自体は継続)。
-    } finally {
-      this.sending = false;
-      if (this.buffer.length > 0 && !this.gone) void this.flush();
     }
   }
 }
@@ -171,6 +173,11 @@ async function uploadImages(
 ): Promise<void> {
   const child = spawn("docker", ["save", ...images]);
   const gzip = createGzip();
+  // アップロード側(fetch)が先に落ちてgzipが破棄されると、pipe書込みがEPIPEを
+  // 発火してエージェントプロセスごと落ちうるため、両ストリームのerrorを処理する
+  // (issue #80レビュー指摘2)。
+  gzip.on("error", () => child.kill("SIGKILL"));
+  child.stdout.on("error", () => {});
   child.stdout.pipe(gzip);
   child.stderr.on("data", (buf: Buffer) => {
     for (const line of buf.toString().split(/\r?\n/)) {
@@ -183,16 +190,25 @@ async function uploadImages(
   });
 
   // Node 22のfetchはduplex:"half"でリクエストボディのストリーミングに対応する。
-  const res = await fetch(`${cfg.baseUrl}/api/agent/jobs/${jobId}/image`, {
-    method: "POST",
-    headers: { ...authHeaders(cfg), "Content-Type": "application/octet-stream" },
-    body: Readable.toWeb(gzip) as unknown as RequestInit["body"],
-    duplex: "half",
-  } as RequestInit);
+  let res: Response;
+  try {
+    res = await fetch(`${cfg.baseUrl}/api/agent/jobs/${jobId}/image`, {
+      method: "POST",
+      headers: { ...authHeaders(cfg), "Content-Type": "application/octet-stream" },
+      body: Readable.toWeb(gzip) as unknown as RequestInit["body"],
+      duplex: "half",
+    } as RequestInit);
+  } catch (e) {
+    // 送信失敗時はdocker saveを残さず止める。
+    child.kill("SIGKILL");
+    throw e;
+  }
 
+  // 410(ジョブ失効)が原因でパイプが切れた場合、saveの終了コードも非0になりうる。
+  // キャンセルとして扱うため410の判定を先に行う(issue #80レビュー指摘4)。
+  if (res.status === 410) throw new JobGoneError();
   const code = await exit;
   if (code !== 0) throw new Error(`docker save exited with code ${code}`);
-  if (res.status === 410) throw new JobGoneError();
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `image upload failed (${res.status})`);

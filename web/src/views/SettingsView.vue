@@ -66,6 +66,7 @@ const agentRunCommand = computed(() => {
   if (!createdAgentToken.value) return "";
   return [
     "docker run -d --name pr-preview-agent \\",
+    "  --restart unless-stopped \\",
     "  -e SERVER_MODE=agent \\",
     `  -e ORCHESTRATOR_URL=${window.location.origin} \\`,
     `  -e AGENT_TOKEN=${createdAgentToken.value} \\`,

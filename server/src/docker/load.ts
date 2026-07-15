@@ -58,20 +58,30 @@ export function dockerLoadFromStream(
 
     // 入力データの到着でもアイドルタイマーを更新する(docker load は完了までほぼ
     // 無出力のため、出力だけを見ると大きな転送中に誤って打ち切ってしまう)。
+    let inputFailed = false;
     stream.on("data", () => {
       armTimer();
       opts.onChunk?.();
     });
     stream.on("error", () => {
       // アップロード切断時はdocker loadを止めて失敗として返す。
+      inputFailed = true;
       child.kill("SIGKILL");
     });
+    // docker loadが先に異常終了した場合、以降のパイプ書込みがEPIPEをstdinへ発火する。
+    // ハンドラが無いとunhandled errorでプロセス全体が落ちるため必ず握り潰す(issue #80レビュー指摘2)。
+    child.stdin.on("error", () => {});
     stream.pipe(child.stdin);
 
     child.on("error", () => finish({ code: -1, output }));
     child.on("close", (code) => {
       if (timedOut) {
         finish({ code: -1, output: `${output}\ndocker load timed out (no data)` });
+        return;
+      }
+      if (inputFailed) {
+        // SIGKILL時はcodeがnullになり成功(0)扱いになってしまうため明示的に失敗させる。
+        finish({ code: -1, output: `${output}\nupload stream failed` });
         return;
       }
       finish({ code: code ?? 0, output });

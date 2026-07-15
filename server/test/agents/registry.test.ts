@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   appendRemoteBuildLogs,
@@ -31,8 +31,14 @@ function makePayload(overrides: Partial<RemoteBuildPayload> = {}): RemoteBuildPa
   };
 }
 
+// タイマー依存のテストが低速CIでflakeしないようfake timersで時間を制御する。
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
 afterEach(() => {
   resetRemoteBuildRegistry();
+  vi.useRealTimers();
 });
 
 describe("remote build registry", () => {
@@ -69,21 +75,59 @@ describe("remote build registry", () => {
   it("rejects after the claim timeout when no agent picks the job up", async () => {
     const build = runRemoteBuild(makePayload(), {
       onLine: () => {},
-      claimTimeoutMs: 30,
-      idleTimeoutMs: 5000,
+      claimTimeoutMs: 30000,
+      idleTimeoutMs: 60000,
     });
-    await expect(build).rejects.toThrow(/No build agent claimed/);
+    const assertion = expect(build).rejects.toThrow(/No build agent claimed/);
+    await vi.advanceTimersByTimeAsync(30000);
+    await assertion;
+  });
+
+  it("keeps waiting past the claim timeout while shouldKeepWaiting returns true", async () => {
+    // ビジー中のオンラインエージェント待ち(issue #80レビュー指摘1):
+    // claimタイムアウトが2回過ぎてもtrueの間は失効せず、その後のclaimで完走する。
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 30000,
+      idleTimeoutMs: 60000,
+      shouldKeepWaiting: () => true,
+    });
+    await vi.advanceTimersByTimeAsync(70000);
+
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    expect(job).not.toBeNull();
+    expect(completeRemoteBuild(job!.id, true)).toBe(true);
+    await expect(build).resolves.toBeUndefined();
+  });
+
+  it("expires an unclaimed job once shouldKeepWaiting turns false", async () => {
+    // エージェントがオフラインになった時点(false)で失効させる。
+    let online = true;
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 30000,
+      idleTimeoutMs: 60000,
+      shouldKeepWaiting: () => online,
+    });
+    const assertion = expect(build).rejects.toThrow(/No build agent claimed/);
+    await vi.advanceTimersByTimeAsync(30000);
+    online = false;
+    await vi.advanceTimersByTimeAsync(30000);
+    await assertion;
   });
 
   it("rejects after the idle timeout when a claimed agent goes silent", async () => {
     const build = runRemoteBuild(makePayload(), {
       onLine: () => {},
-      claimTimeoutMs: 5000,
-      idleTimeoutMs: 40,
+      claimTimeoutMs: 60000,
+      idleTimeoutMs: 5000,
+      firstActivityTimeoutMs: 5000,
     });
     const job = await claimNextRemoteBuild("agent1", 1000);
     expect(job).not.toBeNull();
-    await expect(build).rejects.toThrow(/no activity/);
+    const assertion = expect(build).rejects.toThrow(/no activity/);
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
     // 失効後のログ投稿は拒否され、エージェントに中止が伝わる。
     expect(appendRemoteBuildLogs(job!.id, ["late"])).toBe(false);
   });
@@ -104,7 +148,7 @@ describe("remote build registry", () => {
 
   it("resolves a waiting long-poll when a job arrives", async () => {
     // 先にpollを開始し、あとからジョブを積んでも即座に払い出されること。
-    const claim = claimNextRemoteBuild("agent1", 3000);
+    const claim = claimNextRemoteBuild("agent1", 30000);
     const build = runRemoteBuild(makePayload(), {
       onLine: () => {},
       claimTimeoutMs: 5000,
@@ -117,53 +161,9 @@ describe("remote build registry", () => {
   });
 
   it("returns null from a long-poll when nothing is queued", async () => {
-    const job = await claimNextRemoteBuild("agent1", 30);
-    expect(job).toBeNull();
-  });
-
-  it("does not hand a job to a disconnected long-poll waiter", async () => {
-    // 切断済み(abort)のpollがジョブをclaimすると、エージェント不在のまま
-    // idleタイムアウトまで停滞してしまう(E2Eで発見したバグの回帰テスト)。
-    const pollController = new AbortController();
-    const claim = claimNextRemoteBuild("agent1", 3000, pollController.signal);
-    pollController.abort();
+    const claim = claimNextRemoteBuild("agent1", 30000);
+    await vi.advanceTimersByTimeAsync(30000);
     await expect(claim).resolves.toBeNull();
-
-    const build = runRemoteBuild(makePayload(), {
-      onLine: () => {},
-      claimTimeoutMs: 40,
-      idleTimeoutMs: 5000,
-    });
-    // 切断済みwaiterが残っていない=claimされずclaimタイムアウトで落ちる。
-    await expect(build).rejects.toThrow(/No build agent claimed/);
-  });
-
-  it("fails fast when a claimed agent never reports any activity", async () => {
-    const build = runRemoteBuild(makePayload(), {
-      onLine: () => {},
-      claimTimeoutMs: 5000,
-      idleTimeoutMs: 60000,
-      firstActivityTimeoutMs: 40,
-    });
-    const job = await claimNextRemoteBuild("agent1", 1000);
-    expect(job).not.toBeNull();
-    // 初動タイムアウト(40ms)がフルのidleタイムアウト(60s)より先に効く。
-    await expect(build).rejects.toThrow(/no activity/);
-  });
-
-  it("switches to the full idle timeout after the first activity", async () => {
-    const build = runRemoteBuild(makePayload(), {
-      onLine: () => {},
-      claimTimeoutMs: 5000,
-      idleTimeoutMs: 5000,
-      firstActivityTimeoutMs: 50,
-    });
-    const job = await claimNextRemoteBuild("agent1", 1000);
-    // 初動タイムアウト前にログが届けば、以降はidleTimeoutMsで生存する。
-    expect(appendRemoteBuildLogs(job!.id, ["alive"])).toBe(true);
-    await new Promise((r) => setTimeout(r, 120));
-    expect(completeRemoteBuild(job!.id, true)).toBe(true);
-    await expect(build).resolves.toBeUndefined();
   });
 
   it("hands each queued job to exactly one claimer", async () => {
@@ -187,5 +187,71 @@ describe("remote build registry", () => {
     completeRemoteBuild(a!.id, true);
     completeRemoteBuild(b!.id, true);
     await Promise.all([build1, build2]);
+  });
+
+  it("does not hand a job to a disconnected long-poll waiter", async () => {
+    // 切断済み(abort)のpollがジョブをclaimすると、エージェント不在のまま
+    // idleタイムアウトまで停滞してしまう(E2Eで発見したバグの回帰テスト)。
+    const pollController = new AbortController();
+    const claim = claimNextRemoteBuild("agent1", 30000, pollController.signal);
+    pollController.abort();
+    await expect(claim).resolves.toBeNull();
+
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 30000,
+      idleTimeoutMs: 60000,
+    });
+    // 切断済みwaiterが残っていない=claimされずclaimタイムアウトで落ちる。
+    const assertion = expect(build).rejects.toThrow(/No build agent claimed/);
+    await vi.advanceTimersByTimeAsync(30000);
+    await assertion;
+  });
+
+  it("fails fast when a claimed agent never reports any activity", async () => {
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 60000,
+      idleTimeoutMs: 600000,
+      firstActivityTimeoutMs: 30000,
+    });
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    expect(job).not.toBeNull();
+    // 初動タイムアウト(30s)がフルのidleタイムアウト(600s)より先に効く。
+    const assertion = expect(build).rejects.toThrow(/no activity/);
+    await vi.advanceTimersByTimeAsync(30000);
+    await assertion;
+  });
+
+  it("switches to the full idle timeout after the first activity", async () => {
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 60000,
+      idleTimeoutMs: 600000,
+      firstActivityTimeoutMs: 30000,
+    });
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    // 初動タイムアウト前にログが届けば、以降はidleTimeoutMsで生存する。
+    expect(appendRemoteBuildLogs(job!.id, ["alive"])).toBe(true);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(completeRemoteBuild(job!.id, true)).toBe(true);
+    await expect(build).resolves.toBeUndefined();
+  });
+
+  it("rejects job operations from an agent that did not claim the job", async () => {
+    // claimしたエージェント本人のみ操作できる(issue #80レビュー指摘3)。
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 5000,
+    });
+    const job = await claimNextRemoteBuild("agent1", 1000);
+    expect(appendRemoteBuildLogs(job!.id, ["x"], "agent2")).toBe(false);
+    expect(getRemoteBuild(job!.id, "agent2")).toBeNull();
+    expect(completeRemoteBuild(job!.id, true, undefined, "agent2")).toBe(false);
+    // 本人からの操作は通る。
+    expect(appendRemoteBuildLogs(job!.id, ["x"], "agent1")).toBe(true);
+    expect(completeRemoteBuild(job!.id, true, undefined, "agent1")).toBe(true);
+    await expect(build).resolves.toBeUndefined();
   });
 });
