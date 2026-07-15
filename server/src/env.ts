@@ -15,7 +15,8 @@ const envSchema = z.object({
 
   // Agent mode only: base URL of the orchestrator and the bearer token issued
   // at registration time (shown once in the WebUI).
-  ORCHESTRATOR_URL: z.string().optional(),
+  // URL形式を検証し、typo時に認証エラーと紛らわしい失敗にならないようにする。
+  ORCHESTRATOR_URL: z.url().optional(),
   AGENT_TOKEN: z.string().optional(),
 
   DATABASE_URL: z.string().default("file:./dev.db"),

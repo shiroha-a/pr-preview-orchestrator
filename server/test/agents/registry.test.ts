@@ -4,6 +4,7 @@ import {
   appendRemoteBuildLogs,
   claimNextRemoteBuild,
   completeRemoteBuild,
+  expireAgentJobs,
   getRemoteBuild,
   resetRemoteBuildRegistry,
   runRemoteBuild,
@@ -27,6 +28,7 @@ function makePayload(overrides: Partial<RemoteBuildPayload> = {}): RemoteBuildPa
     hostPort: 13000,
     templateVars: {},
     noCache: false,
+    expectedImages: [],
     ...overrides,
   };
 }
@@ -236,6 +238,32 @@ describe("remote build registry", () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(completeRemoteBuild(job!.id, true)).toBe(true);
     await expect(build).resolves.toBeUndefined();
+  });
+
+  it("expires only the disabled agent's claimed jobs", async () => {
+    // 無効化/削除時にclaim中ジョブを即失効させ、idleタイムアウトまでの停滞を防ぐ
+    // (issue #80レビュー2)。他エージェントのジョブは巻き込まない。
+    const build1 = runRemoteBuild(makePayload({ previewId: "p1" }), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 600000,
+    });
+    const build2 = runRemoteBuild(makePayload({ previewId: "p2" }), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 600000,
+    });
+    const [a, b] = await Promise.all([
+      claimNextRemoteBuild("agent1", 1000),
+      claimNextRemoteBuild("agent2", 1000),
+    ]);
+    expect(expireAgentJobs("agent1", "Build agent was disabled")).toBe(1);
+    await expect(build1).rejects.toThrow(/disabled/);
+    // agent2側のジョブは生きている。
+    expect(getRemoteBuild(b!.id, "agent2")).not.toBeNull();
+    expect(completeRemoteBuild(b!.id, true)).toBe(true);
+    await expect(build2).resolves.toBeUndefined();
+    expect(getRemoteBuild(a!.id)).toBeNull();
   });
 
   it("rejects job operations from an agent that did not claim the job", async () => {

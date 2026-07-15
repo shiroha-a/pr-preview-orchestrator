@@ -30,6 +30,12 @@ export interface RemoteBuildPayload {
   hostPort: number;
   templateVars: Record<string, string>;
   noCache: boolean;
+  /**
+   * Image tags this build is expected to produce, computed by the orchestrator
+   * from its own checkout. The agent saves exactly these; the image endpoint
+   * rejects anything else (issue #80 review 2).
+   */
+  expectedImages: string[];
   /** Injected per job for private clones; never persisted on the agent. */
   githubToken?: string;
 }
@@ -188,8 +194,10 @@ export function runRemoteBuild(
 
     // claimタイムアウト時、shouldKeepWaitingがtrueを返す限りタイマーを張り直す
     // (ビジー中のオンラインエージェント待ち)。判定中にclaim/完了された場合は何もしない。
+    let waitedMs = 0;
     const onClaimTimeout = async () => {
       if (job.state !== "queued") return;
+      waitedMs += opts.claimTimeoutMs;
       let keepWaiting = false;
       if (opts.shouldKeepWaiting) {
         try {
@@ -203,9 +211,10 @@ export function runRemoteBuild(
         job.claimTimer = setTimeout(() => void onClaimTimeout(), opts.claimTimeoutMs);
         return;
       }
+      // 再arm分も含めた実際の待機時間を報告する(issue #80レビュー2)。
       finishJob(job, {
         ok: false,
-        error: new Error(`No build agent claimed the job within ${opts.claimTimeoutMs}ms`),
+        error: new Error(`No build agent claimed the job within ${waitedMs}ms`),
       });
     };
     job.claimTimer = setTimeout(() => void onClaimTimeout(), opts.claimTimeoutMs);
@@ -316,6 +325,23 @@ export function completeRemoteBuild(
     ok ? { ok: true } : { ok: false, error: new Error(error || "Remote build failed") },
   );
   return true;
+}
+
+/**
+ * Fail every job currently claimed by the given agent. Called when an agent is
+ * disabled or deleted mid-build so the awaiting buildPreview() fails (and, in
+ * auto mode, falls back) immediately instead of stalling until the idle
+ * timeout (issue #80 review 2). Returns the number of expired jobs.
+ */
+export function expireAgentJobs(agentId: string, reason: string): number {
+  let count = 0;
+  for (const job of [...jobs.values()]) {
+    if (job.state === "claimed" && job.agentId === agentId) {
+      finishJob(job, { ok: false, error: new Error(reason) });
+      count += 1;
+    }
+  }
+  return count;
 }
 
 /** Test helper: drop all in-memory jobs and waiters. */

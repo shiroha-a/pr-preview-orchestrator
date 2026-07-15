@@ -67,10 +67,28 @@
 - [x] 指摘4: registryテストをfake timers化(flake対策)
 - [x] カバレッジ: ビルド分岐を`executeBuildStep`として抽出し7ケースをユニットテスト化
 
+## レビュー2対応(PR #81)
+
+- [x] 重要: ビルド中エージェントのオフライン誤判定 → `touchAgent`をスロットリング付き
+      never-throw化し、logs/complete/image(チャンク受信)でもハートビートさせる。
+      remoteビジー待ち・auto委譲率・WebUI表示の3点を修正
+- [x] 中1: GitHubトークンのworkspace残留 → `prepareWorkspace`のfinallyでremote URLを
+      トークンなしに戻す(失敗・中断時も掃除)。READMEの記述も実態に合わせ修正
+- [x] 中2: 任意イメージタグ受入 → 本体が自checkoutから期待イメージを算出して
+      payload.expectedImagesで共有し、agentはそれだけをsave、受領側はload出力の
+      `Loaded image:`行を照合して不一致なら失敗(事前manifest検証はPhase 4)
+- [x] 中3: 失効ジョブへの転送完走 → onChunkで失効検知したらstreamをdestroyし早期切断
+- [x] 中4: ビルド中の無効化/削除で停滞 → `expireAgentJobs`でclaim中ジョブを即失効
+- [x] 軽微: pollOnceの未読ボディcancel / claim timeoutメッセージの累計時間化 /
+      `ORCHESTRATOR_URL`のURL形式検証(z.url) / 設計書ステータス更新
+- [x] テスト追加: LogShipper直列化3件 / unexpectedLoadedImages4件 / expireAgentJobs2件
+      (registry+routes)。計125件パス
+
 ## Phase 4(初期リリース後・別PR)
 
 - [ ] エージェント側ビルドキャッシュ掃除(定期prune or 本体指示)
 - [ ] 転送最適化(built imagesのみ選別/圧縮方式)
-- [ ] イメージ受領時のtar manifest検証(期待タグのみ許可。レビュー指摘3のハードニング)
+- [ ] イメージ受領時のtar manifest検証(load前に期待タグのみ許可。レビュー2指摘2の完全版)
+- [ ] Dockerfileのマルチステージ化(devDependencies/webソースを最終イメージから除外)
 - [ ] キュー/健全性のUI改善
 - [ ] 複数エージェントのスケジューリング

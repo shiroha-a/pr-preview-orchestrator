@@ -144,47 +144,59 @@ export interface PrepareWorkspaceOptions {
  */
 export async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> {
   const { dir, owner, name, fetchRef, token, onLine, signal } = opts;
+  const cleanUrl = `https://github.com/${owner}/${name}.git`;
   const cloneUrl = token
     ? `https://x-access-token:${token}@github.com/${owner}/${name}.git`
-    : `https://github.com/${owner}/${name}.git`;
+    : cleanUrl;
   const mask = token ? [token] : [];
 
-  if (!existsSync(dir)) {
-    await mkdir(dirname(dir), { recursive: true });
-    await runCommand("git", ["clone", "--depth", "50", cloneUrl, dir], { onLine, mask, signal });
-  } else {
-    await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cloneUrl], { mask, signal });
-    await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], {
+  try {
+    if (!existsSync(dir)) {
+      await mkdir(dirname(dir), { recursive: true });
+      await runCommand("git", ["clone", "--depth", "50", cloneUrl, dir], { onLine, mask, signal });
+    } else {
+      await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cloneUrl], {
+        mask,
+        signal,
+      });
+      await runCommand("git", ["-C", dir, "fetch", "--depth", "50", "origin"], {
+        onLine,
+        mask,
+        signal,
+      });
+    }
+
+    // Fetch the requested ref (PR head ref works for forks too) and check it out.
+    const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", fetchRef], {
       onLine,
       mask,
       signal,
     });
+    if (fetchCode !== 0) throw new Error(`git fetch of ${fetchRef} failed (code ${fetchCode})`);
+
+    const checkoutCode = await runCommand("git", ["-C", dir, "checkout", "-f", "FETCH_HEAD"], {
+      onLine,
+      mask,
+      signal,
+    });
+    if (checkoutCode !== 0) throw new Error(`git checkout failed (code ${checkoutCode})`);
+
+    // 実際にチェックアウトしたコミットSHAを取得する(ブランチは事前にSHA不明なため)。
+    let sha = "";
+    await runCommand("git", ["-C", dir, "rev-parse", "HEAD"], {
+      onLine: (line) => {
+        const trimmed = line.trim();
+        if (trimmed) sha = trimmed;
+      },
+    });
+    return sha;
+  } finally {
+    // トークン入りURLを.git/configに残さない(issue #80レビュー2)。失敗・中断時も
+    // 必ず掃除するためsignalは渡さない(abort済みだとrunCommandが即rejectするため)。
+    if (token && existsSync(dir)) {
+      await runCommand("git", ["-C", dir, "remote", "set-url", "origin", cleanUrl], { mask });
+    }
   }
-
-  // Fetch the requested ref (PR head ref works for forks too) and check it out.
-  const fetchCode = await runCommand("git", ["-C", dir, "fetch", "origin", fetchRef], {
-    onLine,
-    mask,
-    signal,
-  });
-  if (fetchCode !== 0) throw new Error(`git fetch of ${fetchRef} failed (code ${fetchCode})`);
-
-  const checkoutCode = await runCommand("git", ["-C", dir, "checkout", "-f", "FETCH_HEAD"], {
-    onLine,
-    mask,
-    signal,
-  });
-  if (checkoutCode !== 0) throw new Error(`git checkout failed (code ${checkoutCode})`);
-
-  // 実際にチェックアウトしたコミットSHAを取得する(ブランチは事前にSHA不明なため)。
-  let sha = "";
-  await runCommand("git", ["-C", dir, "rev-parse", "HEAD"], {
-    onLine: (line) => {
-      const trimmed = line.trim();
-      if (trimmed) sha = trimmed;
-    },
-  });
-  return sha;
 }
 
 interface WriteOverrideOptions {

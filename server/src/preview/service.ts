@@ -20,6 +20,7 @@ import {
   runCommand,
 } from "./engine";
 import { emitPreviewLog, emitPreviewStatus } from "./events";
+import { listComposeBuiltImages } from "./images";
 import { startLogStream, stopLogStream } from "./logstream";
 import { reserveHostPort } from "./ports";
 import { type EffectiveSettings, resolveSettings } from "./settings";
@@ -368,8 +369,16 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       buildMode,
       agentOnline: buildMode === "local" ? false : await hasOnlineAgent(),
       log,
-      dispatchRemote: () =>
-        runRemoteBuild(
+      dispatchRemote: async () => {
+        // このビルドが生成すべきイメージタグを本体側のcheckoutから算出する。
+        // エージェントはこの一覧だけをsaveし、受領側も同じ一覧で検証する(issue #80レビュー2)。
+        const expectedImages = await listComposeBuiltImages({
+          dir,
+          composePath: settings.composePath,
+          composeProject: project,
+          onLine: log,
+        });
+        await runRemoteBuild(
           {
             previewId,
             owner: target.owner,
@@ -385,6 +394,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
             hostPort,
             templateVars,
             noCache,
+            expectedImages,
             githubToken: token,
           },
           {
@@ -397,7 +407,8 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
             // autoはフォールバックがあるので早期にローカルへ縮退する(issue #80レビュー指摘1)。
             shouldKeepWaiting: buildMode === "remote" ? () => hasOnlineAgent() : undefined,
           },
-        ),
+        );
+      },
       buildLocal: async () => {
         log(`Running docker compose build${noCache ? " --no-cache" : ""}...`);
         await buildImages({

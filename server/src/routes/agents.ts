@@ -9,6 +9,7 @@ import {
   appendRemoteBuildLogs,
   claimNextRemoteBuild,
   completeRemoteBuild,
+  expireAgentJobs,
   getRemoteBuild,
   touchRemoteBuild,
 } from "../agents/registry";
@@ -17,6 +18,7 @@ import { prisma } from "../db/client";
 import { dockerLoadFromStream } from "../docker/load";
 import { env } from "../env";
 import type { BuildAgent } from "../generated/prisma/client";
+import { unexpectedLoadedImages } from "../preview/images";
 
 /**
  * HTTP surface for external build agents (issue #80).
@@ -76,6 +78,9 @@ const logsSchema = z.object({ lines: z.array(z.string()).max(1000) });
 agentGatewayRoutes.post("/jobs/:id/logs", async (c) => {
   const parsed = logsSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
+  // ビルド中はpollが止まるため、ログ受信もオンライン判定のハートビートにする
+  // (issue #80レビュー2)。touchAgent側でスロットリングされる。
+  void touchAgent(c.get("agent").id);
   // claimしたエージェント本人のみ操作できる(issue #80レビュー指摘3)。
   const ok = appendRemoteBuildLogs(c.req.param("id"), parsed.data.lines, c.get("agent").id);
   // 410: ジョブは失効済み(完了/キャンセル/タイムアウト)。エージェントはビルドを中止する。
@@ -97,10 +102,18 @@ agentGatewayRoutes.post("/jobs/:id/image", async (c) => {
   if (!body) return c.json({ error: "empty body" }, 400);
 
   const stream = Readable.fromWeb(body as import("node:stream/web").ReadableStream);
+  let jobGone = false;
   const result = await dockerLoadFromStream(stream, {
     idleTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
-    // 転送中はチャンク受信でジョブを生存扱いにする(ログは流れないため)。
-    onChunk: () => void touchRemoteBuild(jobId, agentId),
+    // 転送中はチャンク受信でジョブとエージェントを生存扱いにする(ログは流れないため)。
+    onChunk: () => {
+      void touchAgent(agentId);
+      if (!touchRemoteBuild(jobId, agentId)) {
+        // ジョブ失効後のGB級転送を最後まで受けない(issue #80レビュー2)。
+        jobGone = true;
+        stream.destroy(new Error("job gone"));
+      }
+    },
   });
   const lines = result.output
     .split(/\r?\n/)
@@ -108,10 +121,22 @@ agentGatewayRoutes.post("/jobs/:id/image", async (c) => {
     .filter((l) => l.length > 0);
   // load中にジョブが失効していたら410を返し、エージェントに中止を伝える。
   const alive = appendRemoteBuildLogs(jobId, lines, agentId);
+  if (jobGone || !alive) return c.json({ error: "job gone" }, 410);
   if (result.code !== 0) {
     return c.json({ error: `docker load exited with code ${result.code}` }, 500);
   }
-  if (!alive) return c.json({ error: "job gone" }, 410);
+  // 期待タグ以外のイメージが混ざっていたら失敗させる(issue #80レビュー2)。
+  // docker load後の検出なのでタグ自体は既に適用済みだが、ジョブを失敗させて
+  // 露見させる安価な防御。tarのmanifest事前検証はPhase 4で扱う。
+  const unexpected = unexpectedLoadedImages(result.output, job.payload.expectedImages);
+  if (unexpected.length > 0) {
+    appendRemoteBuildLogs(
+      jobId,
+      [`ERROR: agent uploaded unexpected image tag(s): ${unexpected.join(", ")}`],
+      agentId,
+    );
+    return c.json({ error: `unexpected image tags: ${unexpected.join(", ")}` }, 400);
+  }
   return c.json({ ok: true });
 });
 
@@ -124,6 +149,7 @@ const completeSchema = z.object({
 agentGatewayRoutes.post("/jobs/:id/complete", async (c) => {
   const parsed = completeSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "invalid body" }, 400);
+  void touchAgent(c.get("agent").id);
   const ok = completeRemoteBuild(
     c.req.param("id"),
     parsed.data.ok,
@@ -184,6 +210,11 @@ agentsAdminRoutes.patch("/:id", async (c) => {
     .update({ where: { id: c.req.param("id") }, data: { enabled: parsed.data.enabled } })
     .catch(() => null);
   if (!agent) return c.json({ error: "Build agent not found" }, 404);
+  // 無効化後はエージェントの認証が通らず報告が届かないため、claim中のジョブを
+  // 即失効させてidleタイムアウトまでの停滞を防ぐ(issue #80レビュー2)。
+  if (!parsed.data.enabled) {
+    expireAgentJobs(agent.id, `Build agent "${agent.name}" was disabled`);
+  }
   return c.json({ ok: true });
 });
 
@@ -192,5 +223,6 @@ agentsAdminRoutes.delete("/:id", async (c) => {
     .delete({ where: { id: c.req.param("id") } })
     .catch(() => null);
   if (!deleted) return c.json({ error: "Build agent not found" }, 404);
+  expireAgentJobs(deleted.id, `Build agent "${deleted.name}" was deleted`);
   return c.json({ ok: true });
 });

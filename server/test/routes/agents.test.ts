@@ -59,6 +59,7 @@ function makePayload(): RemoteBuildPayload {
     hostPort: 13000,
     templateVars: {},
     noCache: false,
+    expectedImages: [],
   };
 }
 
@@ -171,6 +172,30 @@ describe("agent gateway job flow", () => {
 
     await expect(build).resolves.toBeUndefined();
     expect(lines).toEqual(["step 1", "step 2"]);
+  });
+
+  it("disabling an agent expires its claimed job immediately", async () => {
+    // ビルド中の無効化で以降の報告が401になり、idleタイムアウトまで停滞する問題の
+    // 対策(issue #80レビュー2): PATCHでenabled=falseにした時点でジョブを失効させる。
+    const app = createApp();
+    const { id, token } = await registerAgent(app);
+    const build = runRemoteBuild(makePayload(), {
+      onLine: () => {},
+      claimTimeoutMs: 5000,
+      idleTimeoutMs: 600000,
+    });
+    const claim = await app.request("/api/agent/jobs?wait=5", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(claim.status).toBe(200);
+
+    const patch = await app.request(`/api/agents/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(patch.status).toBe(200);
+    await expect(build).rejects.toThrow(/was disabled/);
   });
 
   it("rejects logs/complete from an agent that did not claim the job", async () => {

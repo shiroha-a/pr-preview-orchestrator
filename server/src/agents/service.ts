@@ -42,9 +42,26 @@ export function findAgentByToken(token: string): Promise<BuildAgent | null> {
   });
 }
 
-/** Record agent activity (called on every authenticated poll). */
+// lastSeenAtのDB書込みをスロットリングする。ビルド中はログが500ms間隔で届くため、
+// 毎回書き込むと無駄なwriteが積み上がる(issue #80レビュー2)。
+const TOUCH_THROTTLE_MS = 30000;
+const lastTouchedAt = new Map<string, number>();
+
+/**
+ * Record agent activity. Called on every poll AND on every job interaction
+ * (logs/image/complete), so an agent that is busy building — and therefore not
+ * polling — still counts as online (issue #80 review 2). Throttled and
+ * never-throwing so callers can fire-and-forget.
+ */
 export async function touchAgent(agentId: string): Promise<void> {
-  await prisma.buildAgent.update({ where: { id: agentId }, data: { lastSeenAt: new Date() } });
+  const now = Date.now();
+  if (now - (lastTouchedAt.get(agentId) ?? 0) < TOUCH_THROTTLE_MS) return;
+  lastTouchedAt.set(agentId, now);
+  try {
+    await prisma.buildAgent.update({ where: { id: agentId }, data: { lastSeenAt: new Date() } });
+  } catch {
+    // 削除直後のレースなどは無視する(次のpollの認証で弾かれる)。
+  }
 }
 
 /** Whether at least one enabled agent is currently online. */

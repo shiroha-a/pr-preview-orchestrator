@@ -3,15 +3,9 @@ import { resolve } from "node:path";
 import { Readable } from "node:stream";
 import { createGzip } from "node:zlib";
 
-import type { ClaimedJob, RemoteBuildPayload } from "../agents/registry";
+import type { ClaimedJob } from "../agents/registry";
 import { env } from "../env";
-import {
-  buildImages,
-  composeArgs,
-  injectBuildFiles,
-  prepareWorkspace,
-  runCommand,
-} from "../preview/engine";
+import { buildImages, injectBuildFiles, prepareWorkspace, runCommand } from "../preview/engine";
 
 /**
  * Build agent runtime (issue #80), started with SERVER_MODE=agent.
@@ -31,7 +25,7 @@ const RETRY_AFTER_AUTH_ERROR_MS = 30000;
 const LOG_FLUSH_INTERVAL_MS = 500;
 const LOG_FLUSH_MAX_LINES = 100;
 
-interface AgentConfig {
+export interface AgentConfig {
   baseUrl: string;
   token: string;
 }
@@ -53,8 +47,9 @@ function authHeaders(cfg: AgentConfig): Record<string, string> {
  * Batches build log lines and ships them to the orchestrator. A 410 response
  * means the job was cancelled/expired on the orchestrator side; the shipper
  * then flags itself gone and fires onGone so the running build gets aborted.
+ * Exported for tests.
  */
-class LogShipper {
+export class LogShipper {
   private buffer: string[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   // 送信をチェーンで直列化する。flush()の戻りは進行中の送信も含めて完了を待つ
@@ -104,61 +99,6 @@ class LogShipper {
       // 一時的な送信失敗はログ欠落として許容する(ビルド自体は継続)。
     }
   }
-}
-
-/** Run a command and capture raw stdout (stderr is forwarded to onLine). */
-function collectOutput(
-  command: string,
-  args: string[],
-  opts: { cwd?: string; onLine?: (line: string) => void } = {},
-): Promise<{ code: number; stdout: string }> {
-  return new Promise((resolvePromise) => {
-    const child = spawn(command, args, { cwd: opts.cwd });
-    let stdout = "";
-    child.stdout.on("data", (buf: Buffer) => {
-      stdout += buf.toString();
-    });
-    child.stderr.on("data", (buf: Buffer) => {
-      for (const line of buf.toString().split(/\r?\n/)) {
-        if (line.length > 0) opts.onLine?.(line);
-      }
-    });
-    child.on("error", () => resolvePromise({ code: -1, stdout }));
-    child.on("close", (code) => resolvePromise({ code: code ?? 0, stdout }));
-  });
-}
-
-/**
- * Extract the image tags of services that are BUILT (have a `build:` section)
- * from `docker compose config --format json` output. Pull-only images are
- * excluded: the orchestrator can pull those itself, so transferring them would
- * only waste bandwidth. Exported for tests.
- */
-export function parseBuiltImages(configJson: string, project: string): string[] {
-  const parsed = JSON.parse(configJson) as {
-    services?: Record<string, { image?: string; build?: unknown } | null>;
-  };
-  const images: string[] = [];
-  for (const [serviceName, service] of Object.entries(parsed.services ?? {})) {
-    if (!service || service.build == null) continue;
-    // compose の既定イメージ名は <project>-<service>(issue #67 と同じ前提)。
-    images.push(service.image ?? `${project}-${serviceName}`);
-  }
-  return images;
-}
-
-async function listBuiltImages(
-  dir: string,
-  payload: RemoteBuildPayload,
-  onLine: (line: string) => void,
-): Promise<string[]> {
-  const { code, stdout } = await collectOutput(
-    "docker",
-    [...composeArgs(payload.composePath, payload.composeProject), "config", "--format", "json"],
-    { cwd: dir, onLine },
-  );
-  if (code !== 0) throw new Error(`docker compose config exited with code ${code}`);
-  return parseBuiltImages(stdout, payload.composeProject);
 }
 
 /**
@@ -297,7 +237,9 @@ async function runJob(cfg: AgentConfig, job: ClaimedJob): Promise<void> {
       onLine,
     });
 
-    const images = await listBuiltImages(dir, payload, onLine);
+    // 転送対象は本体が算出した期待イメージ(payload.expectedImages)に揃える。
+    // 受領側のタグ検証と一致し、エージェント側compose configとのドリフトも避けられる。
+    const images = payload.expectedImages;
     if (images.length === 0) {
       onLine("[agent] No service has a build section; nothing to transfer.");
     } else {
@@ -336,11 +278,14 @@ async function pollOnce(cfg: AgentConfig): Promise<ClaimedJob | null> {
   }
   if (res.status === 204) return null;
   if (res.status === 401) {
+    // 未読ボディはundiciの接続再利用を妨げるため破棄する(issue #80レビュー2)。
+    await res.body?.cancel().catch(() => {});
     log("Token rejected (invalid, or the agent is disabled). Check AGENT_TOKEN.");
     await sleep(RETRY_AFTER_AUTH_ERROR_MS);
     return null;
   }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     log(`Unexpected poll response ${res.status}; retrying...`);
     await sleep(RETRY_AFTER_ERROR_MS);
     return null;
