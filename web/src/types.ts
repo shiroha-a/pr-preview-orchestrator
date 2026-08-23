@@ -186,6 +186,8 @@ export interface AppConfig {
   preview: {
     workspacesDir: string;
     tunnelImage: string;
+    buildTimeoutMs: number;
+    metricsDiskPath: string;
   };
 }
 
