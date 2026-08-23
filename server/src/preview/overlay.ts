@@ -59,7 +59,7 @@ export function parseProfileOverlayEntries(json: string | null | undefined): Pro
  *
  * This lets a test-specific compose file, config (e.g. default.yml), or volume
  * setup live outside the target repository and be injected at build time.
- * Content supports {{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}} plus
+ * Content supports {{PREVIEW_URL}} / {{PREVIEW_HOST}} plus
  * {{PR_NUMBER}} / {{PR_TITLE}} / {{PROFILE_NAME}} (issue #75). Parent
  * directories are created and existing files overwritten. Paths that escape the
  * workspace (e.g. via "..") are skipped.

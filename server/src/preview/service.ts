@@ -11,11 +11,17 @@ import { notifyAll } from "../push/service";
 
 import { emitPreviewLog, emitPreviewStatus } from "./events";
 import { startLogStream, stopLogStream } from "./logstream";
-import { reserveHostPort } from "./ports";
 import { applyOverlays } from "./overlay";
 import { applyRewrites, parseRewriteRules } from "./rewrite";
 import { composeFileArgs, type EffectiveSettings, resolveSettings } from "./settings";
-import { getTunnelUrl, isTunnelAlive, startTunnel, stopTunnel } from "./tunnel";
+import {
+  connectTunnel,
+  disconnectTunnel,
+  getTunnelUrl,
+  isTunnelAlive,
+  startTunnel,
+  stopTunnel,
+} from "./tunnel";
 
 const OVERRIDE_FILE = "preview.orchestrator.override.yml";
 
@@ -308,21 +314,26 @@ async function prepareWorkspace(opts: PrepareWorkspaceOptions): Promise<string> 
 interface WriteOverrideOptions {
   dir: string;
   webService: string;
-  hostPort: number;
-  internalPort: number;
 }
 
-/** Write a compose override mapping the web service to a dynamic host port. */
+/**
+ * Compose override that drops every published host port of the web service.
+ *
+ * Previews are reachable through their Cloudflare tunnel only, so no host port
+ * is needed (issue #90). `!override` empties the target repository's own `ports`
+ * entries, which is what lets several previews of the same repository run at
+ * once without fighting over the ports baked into its docker-compose.yml.
+ */
+export function renderOverride(webService: string): string {
+  return `services:\n  ${webService}:\n    ports: !override []\n`;
+}
+
+/** Write the compose override into the workspace. */
 function writeOverride(opts: WriteOverrideOptions): void {
-  const { dir, webService, hostPort, internalPort } = opts;
-  // `!override` replaces any existing `ports` on the service, so a repository's
-  // existing docker-compose.yml (even with fixed host ports) can be reused
-  // without conflicts across simultaneous previews.
-  const yaml = `services:\n  ${webService}:\n    ports: !override\n      - "${hostPort}:${internalPort}"\n`;
-  writeFileSync(join(dir, OVERRIDE_FILE), yaml);
+  writeFileSync(join(opts.dir, OVERRIDE_FILE), renderOverride(opts.webService));
 }
 
-function hostnameOf(url: string, fallback: string): string {
+function hostnameOf(url: string, fallback = ""): string {
   try {
     return new URL(url).hostname;
   } catch {
@@ -377,10 +388,7 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     logBuffer.push(line);
     emitPreviewLog(previewId, line);
   };
-  const setStatus = async (
-    status: string,
-    extra: { hostPort?: number; url?: string | null } = {},
-  ) => {
+  const setStatus = async (status: string, extra: { url?: string | null } = {}) => {
     emitPreviewStatus(previewId, status);
     await prisma.previewEnvironment.update({
       where: { id: previewId },
@@ -426,34 +434,25 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       });
     }
 
-    // 並列ビルドでのポート衝突を避けるため、確保と同時にDBへ予約する(issue #33)。
-    const hostPort = preview.hostPort ?? (await reserveHostPort(previewId));
-    log(`Allocated host port ${hostPort}`);
-
-    // Start the tunnel first so its URL is known to the rewrite step.
-    let url = `http://${env.PREVIEW_HOST}:${hostPort}`;
-    if (env.PREVIEW_TUNNEL) {
-      // keepTunnel時は既存トンネルを流用しURLを維持する(DB再生成不要。issue #42)。
-      if (keepTunnel && (await isTunnelAlive(previewId)) && preview.url) {
-        url = preview.url;
-        log(`Reusing existing tunnel: ${url}`);
-      } else {
-        try {
-          log("Starting Cloudflare Quick Tunnel...");
-          url = await startTunnel(previewId, hostPort);
-          log(`Tunnel ready: ${url}`);
-        } catch (e) {
-          const message = e instanceof Error ? e.message : String(e);
-          log(`WARN: Cloudflare tunnel failed (${message}); falling back to ${url}`);
-        }
-      }
+    // プレビューはトンネル経由でのみ公開する(issue #90)。書き換え・オーバーレイに
+    // URLを注入する必要があるので、compose up より前にトンネルを立ててURLを確定させる。
+    // originはcomposeのサービス名で解決するため、up後に connectTunnel で接続する。
+    const origin = `http://${settings.webService}:${settings.internalPort}`;
+    let url: string;
+    // keepTunnel時は既存トンネルを流用しURLを維持する(DB再生成不要。issue #42)。
+    if (keepTunnel && (await isTunnelAlive(previewId)) && preview.url) {
+      url = preview.url;
+      log(`Reusing existing tunnel: ${url}`);
+    } else {
+      log("Starting Cloudflare Quick Tunnel...");
+      url = await startTunnel(previewId, origin);
+      log(`Tunnel ready: ${url}`);
     }
 
     const templateVars = {
       ...target.templateVars,
       PREVIEW_URL: url,
-      PREVIEW_HOST: hostnameOf(url, env.PREVIEW_HOST),
-      HOST_PORT: String(hostPort),
+      PREVIEW_HOST: hostnameOf(url),
     };
 
     // Write overlay files (e.g. a test-specific compose file or config from
@@ -472,18 +471,15 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
       applyRewrites(dir, rules, templateVars, log);
     }
 
-    writeOverride({
-      dir,
-      webService: settings.webService,
-      hostPort,
-      internalPort: settings.internalPort,
-    });
+    writeOverride({ dir, webService: settings.webService });
 
-    await setStatus("building", { hostPort, url });
+    await setStatus("building", { url });
 
     // リポジトリ設定またはオンデマンド要求(issue #41)でボリュームを破棄する。
     if (settings.resetVolumes || resetVolumes) {
       log("Resetting volumes (docker compose down -v)...");
+      // トンネルが繋がったままだとネットワークを削除できないので先に外す(issue #90)。
+      await disconnectTunnel(previewId);
       await runCommand(
         "docker",
         [
@@ -533,7 +529,17 @@ export async function buildPreview(previewId: string, opts: BuildOptions = {}): 
     );
     if (code !== 0) throw new Error(`docker compose up exited with code ${code}`);
 
-    await setStatus("running", { url, hostPort });
+    // upでネットワークができた後にトンネルを接続する。ここで初めてoriginへ到達する。
+    if (await connectTunnel(previewId, project, settings.webService)) {
+      log(`Tunnel connected to the ${settings.webService} service`);
+    } else {
+      log(
+        `WARN: could not attach the tunnel to the ${settings.webService} service network; ` +
+          "the preview may be unreachable",
+      );
+    }
+
+    await setStatus("running", { url });
     log(`Preview is running at ${url}`);
 
     // ビルド完了をプッシュ通知する(issue #77)。失敗してもビルドには影響させない。
@@ -636,16 +642,16 @@ export async function destroyPreview(previewId: string): Promise<void> {
 
   await prisma.previewEnvironment.update({
     where: { id: previewId },
-    data: { status: "stopped", url: null, hostPort: null },
+    data: { status: "stopped", url: null },
   });
   emitPreviewStatus(previewId, "stopped");
 }
 
 /**
  * Stop the preview's containers without removing them (issue #32). Unlike
- * destroy, the containers, volumes, workspace and allocated host port are kept,
- * so the preview can be resumed quickly (via restart) without rebuilding.
- * Frees memory/CPU and the Cloudflare tunnel; sets status to "paused".
+ * destroy, the containers, volumes and workspace are kept, so the preview can be
+ * resumed quickly (via restart) without rebuilding. Frees memory/CPU and the
+ * Cloudflare tunnel; sets status to "paused".
  */
 export async function stopPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
@@ -696,14 +702,11 @@ export async function stopPreview(previewId: string): Promise<void> {
   }
 
   // ビルドが overrideファイル生成まで進んでいない場合(早期中断など)は再開不能なので、
-  // 偽の "paused" にせず "stopped"(ポート解放)にする(issue #33)。
+  // 偽の "paused" にせず "stopped" にする(issue #33)。
   const resumable = existsSync(dir) && existsSync(join(dir, OVERRIDE_FILE));
   await prisma.previewEnvironment.update({
     where: { id: previewId },
-    // resumable時のみ hostPort を確保したまま(再開で同じポートを再利用)。
-    data: resumable
-      ? { status: "paused", url: null }
-      : { status: "stopped", url: null, hostPort: null },
+    data: { status: resumable ? "paused" : "stopped", url: null },
   });
   emitPreviewStatus(previewId, resumable ? "paused" : "stopped");
 }
@@ -750,6 +753,12 @@ export async function restartPreview(previewId: string, opts: RestartOptions = {
     if (!existsSync(dir)) {
       throw new Error("ワークスペースがありません。先にプレビューを起動してください。");
     }
+    // トンネルの張り直し先(origin)に必要なため、再起動でも実効設定を確認する。
+    if (!settings.webService || !settings.internalPort) {
+      throw new Error(
+        "プレビュー設定(公開Webサービス名・内部ポート)が未設定です。リポジトリのプレビュー設定で指定してください。",
+      );
+    }
 
     await setStatus("building");
     const composeArgs = [
@@ -764,6 +773,8 @@ export async function restartPreview(previewId: string, opts: RestartOptions = {
       // ボリューム破棄は `restart` では反映されないため down -v で作り直す(issue #58)。
       // イメージは既存のものを使うので --build は付けない(再ビルドしない)。
       log("Resetting volumes (docker compose down -v)...");
+      // 繋がったままだとネットワークを削除できないので先に外す(issue #90)。
+      await disconnectTunnel(previewId);
       const downCode = await runCommand(
         "docker",
         [...composeArgs, "down", "-v", "--remove-orphans"],
@@ -792,29 +803,25 @@ export async function restartPreview(previewId: string, opts: RestartOptions = {
     }
 
     // トンネルは流用。破棄指定(issue #58)か、生きていなければ(サーバー再起動後など)張り直す。
-    let url = preview.url ?? `http://${env.PREVIEW_HOST}:${preview.hostPort ?? 0}`;
-    if (
-      env.PREVIEW_TUNNEL &&
-      preview.hostPort &&
-      (resetTunnel || !(await isTunnelAlive(previewId)))
-    ) {
-      try {
-        log(
-          resetTunnel
-            ? "Discarding the tunnel and starting a new Cloudflare Quick Tunnel..."
-            : "Tunnel is not active; starting a new Cloudflare Quick Tunnel...",
-        );
-        url = await startTunnel(previewId, preview.hostPort);
-        log(`Tunnel ready: ${url}`);
-      } catch (e) {
-        // トンネル破棄時は旧URLが既に無効なので直接アクセス用URLへ退避する。
-        if (resetTunnel) url = `http://${env.PREVIEW_HOST}:${preview.hostPort}`;
-        log(
-          `WARN: tunnel failed (${e instanceof Error ? e.message : String(e)}); falling back to ${url}`,
-        );
-      }
-    } else if (env.PREVIEW_TUNNEL) {
+    let url = preview.url ?? "";
+    if (resetTunnel || !(await isTunnelAlive(previewId))) {
+      log(
+        resetTunnel
+          ? "Discarding the tunnel and starting a new Cloudflare Quick Tunnel..."
+          : "Tunnel is not active; starting a new Cloudflare Quick Tunnel...",
+      );
+      url = await startTunnel(previewId, `http://${settings.webService}:${settings.internalPort}`);
+      log(`Tunnel ready: ${url}`);
+    } else {
       log("Reusing the existing tunnel.");
+    }
+
+    // down -v でネットワークが作り直された場合も含め、接続を確実にする(issue #90)。
+    if (!(await connectTunnel(previewId, preview.composeProject, settings.webService))) {
+      log(
+        `WARN: could not attach the tunnel to the ${settings.webService} service network; ` +
+          "the preview may be unreachable",
+      );
     }
 
     await setStatus("running", { url });
@@ -846,36 +853,42 @@ export async function reattachPreview(previewId: string): Promise<void> {
   const loaded = await loadPreviewWithTarget(previewId);
   if (!loaded) return;
   const preview = loaded;
-  if (preview.status !== "running" || preview.hostPort == null) return;
+  if (preview.status !== "running") return;
 
   const { settings, dir } = resolveBuildTarget(loaded);
   const log = (line: string) => emitPreviewLog(previewId, line);
 
   // トンネルはコンテナ化されアプリ再起動を跨いで生存する(issue #48)。生きていれば
   // 現在のURLを読み直してDBを同期し(=URL維持)、コンテナが無い場合のみ張り直す。
-  if (env.PREVIEW_TUNNEL) {
-    if (await isTunnelAlive(previewId)) {
-      const url = await getTunnelUrl(previewId);
-      if (url && url !== preview.url) {
-        // コンテナ再起動などでURLが変わっていた場合のみDBを更新して通知する。
-        await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
-        log(`Reattached to existing tunnel: ${url}`);
-        emitPreviewStatus(previewId, "running");
-      } else {
-        log(`Existing tunnel is still alive: ${url ?? preview.url}`);
-      }
+  if (await isTunnelAlive(previewId)) {
+    const url = await getTunnelUrl(previewId);
+    if (url && url !== preview.url) {
+      // コンテナ再起動などでURLが変わっていた場合のみDBを更新して通知する。
+      await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
+      log(`Reattached to existing tunnel: ${url}`);
+      emitPreviewStatus(previewId, "running");
     } else {
-      try {
-        log("Tunnel container is gone; starting a new Cloudflare Quick Tunnel...");
-        const url = await startTunnel(previewId, preview.hostPort);
-        await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
-        log(`Tunnel ready: ${url}`);
-        // 開いているパネルにURL更新を促す(statusは running のまま)。
-        emitPreviewStatus(previewId, "running");
-      } catch (e) {
-        log(`WARN: failed to re-establish tunnel: ${e instanceof Error ? e.message : String(e)}`);
-      }
+      log(`Existing tunnel is still alive: ${url ?? preview.url}`);
     }
+  } else if (settings.webService && settings.internalPort) {
+    try {
+      log("Tunnel container is gone; starting a new Cloudflare Quick Tunnel...");
+      const url = await startTunnel(
+        previewId,
+        `http://${settings.webService}:${settings.internalPort}`,
+      );
+      await prisma.previewEnvironment.update({ where: { id: previewId }, data: { url } });
+      log(`Tunnel ready: ${url}`);
+      // 開いているパネルにURL更新を促す(statusは running のまま)。
+      emitPreviewStatus(previewId, "running");
+    } catch (e) {
+      log(`WARN: failed to re-establish tunnel: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // ネットワークへの接続もコンテナ再作成で失われ得るので張り直す(issue #90)。
+  if (settings.webService) {
+    await connectTunnel(previewId, preview.composeProject, settings.webService);
   }
 
   // 実行時ログのストリーミングも再起動で失われるため、workspaceがあれば再開する。

@@ -70,7 +70,6 @@ export interface PreviewDTO {
   status: string;
   composeProject: string;
   url: string | null;
-  hostPort: number | null;
   commitSha: string | null;
   logs: string;
   // 使用中の設定プロファイル(null=既定の設定。issue #52)。
@@ -185,11 +184,8 @@ export interface AppConfig {
   webhookSecretSet: boolean;
   adminAuthEnabled: boolean;
   preview: {
-    host: string;
-    portMin: number;
-    portMax: number;
     workspacesDir: string;
-    tunnel: boolean;
+    tunnelImage: string;
   };
 }
 

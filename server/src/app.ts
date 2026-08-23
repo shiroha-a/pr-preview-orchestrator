@@ -36,11 +36,8 @@ export function createApp() {
       webhookSecretSet: Boolean(env.GITHUB_WEBHOOK_SECRET),
       adminAuthEnabled: getCachedUserCount() > 0,
       preview: {
-        host: env.PREVIEW_HOST,
-        portMin: env.PREVIEW_PORT_MIN,
-        portMax: env.PREVIEW_PORT_MAX,
         workspacesDir: env.WORKSPACES_DIR,
-        tunnel: env.PREVIEW_TUNNEL,
+        tunnelImage: env.PREVIEW_TUNNEL_IMAGE,
       },
     }),
   );

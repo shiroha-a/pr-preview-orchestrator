@@ -42,7 +42,7 @@ export function expandTemplate(template: string, vars: Record<string, string>): 
  * Apply file rewrite rules to a cloned workspace before starting the preview.
  *
  * Each rule replaces regex matches in a file; the replacement supports
- * {{PREVIEW_URL}}, {{PREVIEW_HOST}}, {{HOST_PORT}}, {{PR_NUMBER}}, {{PR_TITLE}}
+ * {{PREVIEW_URL}}, {{PREVIEW_HOST}}, {{PR_NUMBER}}, {{PR_TITLE}}
  * and {{PROFILE_NAME}} placeholders (issue #75). Missing files are skipped with
  * a warning rather than failing the build.
  */
