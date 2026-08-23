@@ -51,3 +51,4 @@
 - [x] README・`.env.example`(直下/server)・`docker-compose.yml`の更新
 - [x] 指摘3: 設定画面の「外部公開」行(常に固定値)を削除
 - [x] 指摘4: 設定画面に`PREVIEW_BUILD_TIMEOUT_MS`と`METRICS_DISK_PATH`の表示を追加
+- [x] 指摘5: タイムアウト表記を時分秒の複合表記に(210000ms→「3分30秒」)
