@@ -22,3 +22,26 @@ jobs:
 
       - name: Run CI
         run: bash scripts/ci.sh
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose config -q
+
+      - name: Build the orchestrator image
+        run: docker build -t pr-preview-orchestrator:ci .
+
+      - name: Verify the bundled tooling and build output
+        run: |
+          docker run --rm --entrypoint sh pr-preview-orchestrator:ci -c '
+            set -e
+            node -v
+            docker --version
+            docker compose version --short
+            git --version
+            test -f /app/web/dist/index.html
+            test -f /app/server/dist/index.js
+          '

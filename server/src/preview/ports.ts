@@ -1,9 +1,16 @@
 import net from "node:net";
 
 import { prisma } from "../db/client";
+import { listPublishedHostPorts } from "../docker/ports";
 import { env } from "../env";
 
-/** Check whether a TCP port is free to bind on the host. */
+/**
+ * Check whether a TCP port is free to bind in this process's network namespace.
+ *
+ * When the orchestrator itself runs in a container (issue #90) this only covers
+ * the container's namespace, so {@link allocateHostPort} additionally asks the
+ * docker daemon which host ports are already published.
+ */
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -26,8 +33,13 @@ export async function allocateHostPort(): Promise<number> {
   });
   const used = new Set(rows.map((r) => r.hostPort).filter((p): p is number => p != null));
 
+  // 本体をコンテナで動かすとローカルのbind判定はホストの使用状況を映さないため、
+  // ホストのデーモンが公開中のポートをデーモン経由で除外する(issue #90)。
+  // ベアメタル運用でも、本体が知らないコンテナとの衝突を防げる。
+  const published = await listPublishedHostPorts();
+
   for (let port = env.PREVIEW_PORT_MIN; port <= env.PREVIEW_PORT_MAX; port += 1) {
-    if (used.has(port)) continue;
+    if (used.has(port) || published.has(port)) continue;
     if (await isPortFree(port)) return port;
   }
   throw new Error("No free host port available in the configured range.");
