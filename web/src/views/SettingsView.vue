@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Bell, CheckCircle2, Plus, Trash2, UserPlus, Volume2, XCircle } from "lucide-vue-next";
 
 import { api } from "../api/client";
@@ -18,6 +18,13 @@ import BaseCard from "../components/ui/BaseCard.vue";
 const loading = ref(true);
 const error = ref<string | null>(null);
 const config = ref<AppConfig | null>(null);
+
+// msのままだと桁が読みにくいので分/秒を併記する。
+const buildTimeoutLabel = computed(() => {
+  const ms = config.value?.preview.buildTimeoutMs ?? 0;
+  const unit = ms % 60000 === 0 ? `${ms / 60000}分` : `${Math.round(ms / 1000)}秒`;
+  return `${unit} (${ms} ms)`;
+});
 
 // ユーザー管理
 const users = ref<UserDTO[]>([]);
@@ -318,6 +325,14 @@ const inputClass =
           <div class="flex items-center justify-between py-1.5">
             <span class="text-gray-600 dark:text-gray-300">トンネルのイメージ</span>
             <code class="text-xs">{{ config.preview.tunnelImage }}</code>
+          </div>
+          <div class="flex items-center justify-between py-1.5">
+            <span class="text-gray-600 dark:text-gray-300">ビルドのアイドルタイムアウト</span>
+            <code class="text-xs">{{ buildTimeoutLabel }}</code>
+          </div>
+          <div class="flex items-center justify-between py-1.5">
+            <span class="text-gray-600 dark:text-gray-300">ディスク使用量の計測対象</span>
+            <code class="text-xs">{{ config.preview.metricsDiskPath }}</code>
           </div>
         </div>
       </BaseCard>

@@ -38,6 +38,8 @@ export function createApp() {
       preview: {
         workspacesDir: env.WORKSPACES_DIR,
         tunnelImage: env.PREVIEW_TUNNEL_IMAGE,
+        buildTimeoutMs: env.PREVIEW_BUILD_TIMEOUT_MS,
+        metricsDiskPath: env.METRICS_DISK_PATH,
       },
     }),
   );
