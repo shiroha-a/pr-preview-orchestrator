@@ -312,15 +312,9 @@ const inputClass =
         </div>
         <div class="space-y-1 px-4 py-3 text-sm">
           <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">外部公開(Cloudflare Tunnel)</span>
-            <span
-              v-if="config.preview.tunnel"
-              class="inline-flex items-center gap-1 text-green-600"
-            >
-              <CheckCircle2 class="h-4 w-4" />有効
-            </span>
-            <span v-else class="inline-flex items-center gap-1 text-gray-400">
-              <XCircle class="h-4 w-4" />無効(localhost)
+            <span class="text-gray-600 dark:text-gray-300">外部公開</span>
+            <span class="inline-flex items-center gap-1 text-green-600">
+              <CheckCircle2 class="h-4 w-4" />Cloudflare Tunnel
             </span>
           </div>
           <div class="flex items-center justify-between py-1.5">
@@ -328,8 +322,8 @@ const inputClass =
             <code class="text-xs">{{ config.preview.workspacesDir }}</code>
           </div>
           <div class="flex items-center justify-between py-1.5">
-            <span class="text-gray-600 dark:text-gray-300">ポート範囲</span>
-            <code class="text-xs">{{ config.preview.portMin }} - {{ config.preview.portMax }}</code>
+            <span class="text-gray-600 dark:text-gray-300">トンネルのイメージ</span>
+            <code class="text-xs">{{ config.preview.tunnelImage }}</code>
           </div>
         </div>
       </BaseCard>

@@ -30,22 +30,9 @@ const envSchema = z.object({
   // Local directory where target repositories are cloned.
   WORKSPACES_DIR: z.string().default("./workspaces"),
 
-  // Hostname used to build local preview URLs (when tunnelling is disabled).
-  PREVIEW_HOST: z.string().default("localhost"),
-
-  // Host port range allocated to preview environments.
-  PREVIEW_PORT_MIN: z.coerce.number().int().default(13000),
-  PREVIEW_PORT_MAX: z.coerce.number().int().default(13999),
-
-  // Expose previews via Cloudflare Quick Tunnel (trycloudflare.com). Set to
-  // "false" to disable and use local URLs instead.
-  PREVIEW_TUNNEL: z
-    .string()
-    .optional()
-    .transform((v) => v !== "false"),
-
   // Docker image used to run each preview's Cloudflare tunnel as a detached
-  // container, so the tunnel survives an app restart (issue #48).
+  // container, so the tunnel survives an app restart (issue #48). Previews are
+  // reachable only through this tunnel and publish no host ports (issue #90).
   PREVIEW_TUNNEL_IMAGE: z.string().default("cloudflare/cloudflared:latest"),
 
   // Docker image used as a throwaway helper to read/write preview volumes for
@@ -60,10 +47,11 @@ const envSchema = z.object({
   // different previews run concurrently; same-preview jobs stay serialized.
   PREVIEW_JOB_CONCURRENCY: z.coerce.number().int().min(1).default(3),
 
-  // Filesystem path measured by the disk usage metric. When the orchestrator
-  // runs in a container (issue #90), point this at the mounted data directory
-  // so the gauge reflects the host disk instead of the container overlay fs.
-  METRICS_DISK_PATH: z.string().default("/"),
+  // Filesystem path measured by the disk usage metric. Defaults to the docker
+  // data root, which is what fills up in practice (images / build cache /
+  // volumes). Falls back to "/" when the path is unavailable, e.g. rootless
+  // docker or a container without the bind mount (issue #90).
+  METRICS_DISK_PATH: z.string().default("/var/lib/docker"),
 
   // Directory of the built web SPA, served by Hono in production (relative to server/).
   WEB_DIST_DIR: z.string().default("../web/dist"),

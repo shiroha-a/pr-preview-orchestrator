@@ -58,7 +58,7 @@ interface ProfileForm {
 const profiles = ref<ProfileForm[]>([]);
 
 // {{ }} は Vue の補間と衝突するため定数経由でヒントを表示する。
-const varsHint = "{{PREVIEW_URL}} / {{PREVIEW_HOST}} / {{HOST_PORT}}";
+const varsHint = "{{PREVIEW_URL}} / {{PREVIEW_HOST}}";
 
 function parseJsonArray<T>(value: string | null): T[] {
   try {

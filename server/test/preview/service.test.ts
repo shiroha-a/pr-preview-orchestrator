@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { PullRequest, Repository, SettingsProfile } from "../../src/generated/prisma/client";
-import { resolveBuildTarget, type PreviewWithTarget } from "../../src/preview/service";
+import {
+  renderOverride,
+  resolveBuildTarget,
+  type PreviewWithTarget,
+} from "../../src/preview/service";
 
 function makeRepo(overrides: Partial<Repository> = {}): Repository {
   return {
@@ -77,7 +81,6 @@ function makePreview(overrides: Partial<PreviewWithTarget> = {}): PreviewWithTar
     status: "idle",
     composeProject: "preview-acme-app-pr123",
     url: null,
-    hostPort: null,
     commitSha: null,
     logs: "",
     profileId: null,
@@ -141,5 +144,18 @@ describe("resolveBuildTarget templateVars (issue #75)", () => {
       profile: makeProfile({ name: "no-search" }),
     });
     expect(resolveBuildTarget(preview).templateVars.PROFILE_NAME).toBe("no-search");
+  });
+});
+
+describe("renderOverride (issue #90)", () => {
+  it("公開Webサービスのports定義を空にする(ホストポートを公開しない)", () => {
+    const yaml = renderOverride("web");
+    expect(yaml).toBe("services:\n  web:\n    ports: !override []\n");
+    // ホストポートの割り当ては廃止したので、ポート番号が混ざらないこと。
+    expect(yaml).not.toMatch(/\d{2,}/);
+  });
+
+  it("サービス名をそのまま使う", () => {
+    expect(renderOverride("frontend-app")).toContain("  frontend-app:\n");
   });
 });

@@ -26,6 +26,28 @@ async function readSwap(): Promise<{ total: number; used: number; free: number }
   }
 }
 
+interface DiskUsage {
+  total: number;
+  used: number;
+  free: number;
+}
+
+const ZERO_DISK: DiskUsage = { total: 0, used: 0, free: 0 };
+
+/** Filesystem usage of the given path, or null when it cannot be measured. */
+async function diskUsage(path: string): Promise<DiskUsage | null> {
+  try {
+    const s = await statfs(path);
+    const blockSize = Number(s.bsize);
+    const total = Number(s.blocks) * blockSize;
+    const free = Number(s.bavail) * blockSize;
+    const used = total - Number(s.bfree) * blockSize;
+    return { total, used, free };
+  } catch {
+    return null;
+  }
+}
+
 interface RawContainerStat {
   name: string;
   cpu: number; // percent
@@ -157,18 +179,9 @@ metricsRoutes.get("/", async (c) => {
   const memTotal = os.totalmem();
   const memFree = os.freemem();
 
-  let disk = { total: 0, used: 0, free: 0 };
-  try {
-    // コンテナ運用ではルートFSがイメージ層になるため、計測対象をenvで差し替える(issue #90)。
-    const s = await statfs(env.METRICS_DISK_PATH);
-    const blockSize = Number(s.bsize);
-    const total = Number(s.blocks) * blockSize;
-    const free = Number(s.bavail) * blockSize;
-    const used = total - Number(s.bfree) * blockSize;
-    disk = { total, used, free };
-  } catch {
-    // statfs に失敗した場合は 0 のまま返す。
-  }
+  // 実際に逼迫するのはdockerのデータルート(イメージ/ビルドキャッシュ/ボリューム)なので
+  // 既定はそこを見る。マウントされていない等で取得できない場合は / へ退避する(issue #90)。
+  const disk = (await diskUsage(env.METRICS_DISK_PATH)) ?? (await diskUsage("/")) ?? ZERO_DISK;
 
   const swap = await readSwap();
   const previews = await previewUsage();

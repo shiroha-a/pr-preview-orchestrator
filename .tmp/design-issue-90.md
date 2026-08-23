@@ -114,3 +114,47 @@ environment:
 - イメージのレジストリ公開(GHCR等)。ローカル`build: .`で運用する。
 - DinD構成・rootlessモード対応。
 - 本体コンテナからプレビューへの疎通確認(現状も未実装)。
+
+---
+
+## 5. PR #91 レビュー対応(2026-08-24)
+
+### 指摘1: ディスク使用量の既定は`/var/lib/docker`が良い
+
+`METRICS_DISK_PATH`の既定を`/`から**`/var/lib/docker`**(dockerのデータルート)へ変更した。
+実際に逼迫するのはイメージ・ビルドキャッシュ・ボリュームが載るこのパスであるため。
+
+- 取得に失敗した場合は`/`へフォールバックする(rootlessやマウント無しでも0表示にならない)。
+- composeは`${DOCKER_ROOT_DIR:-/var/lib/docker}`を**読み取り専用**でマウントする(`statfs`にのみ使用)。
+
+### 指摘2: トンネル公開なら外部ポートは不要。トンネルを必須要件にして単純化する
+
+プレビューの公開を**Cloudflare Quick Tunnel経由のみ**にし、ホストポートの割り当て・公開を全廃した。
+これにより issue #90 で問題になっていた「コンテナ内からホストのポート空き状況が分からない」問題自体が
+消滅する(2.2で追加したポート走査も不要になり削除)。
+
+**方式**: トンネルのコンテナをプレビューのcomposeネットワークに参加させ、composeのサービス名で
+originへ到達する(`http://<webService>:<internalPort>`)。
+
+順序の制約と解法:
+
+- URLはファイル書き換え/オーバーレイに注入するため`compose up`より**前**に確定させる必要がある。
+- 一方、参加すべきネットワークは`compose up`が作るまで存在しない。
+- → トンネルは既定のbridge(外向き通信が可能)で起動してURLを確定させ、`up`の後に
+  `docker network connect`で接続する。cloudflaredはoriginのDNSをリクエスト時に解決するため、
+  起動時点でサービスが存在しなくてよい。
+- `compose down`の前に`docker network disconnect`する。繋がったままだとネットワークを削除できない。
+
+**廃止したもの**: `PREVIEW_HOST` / `PREVIEW_PORT_MIN` / `PREVIEW_PORT_MAX` / `PREVIEW_TUNNEL`(常時有効)、
+`PreviewEnvironment.hostPort`列、`{{HOST_PORT}}`テンプレート変数、`preview/ports.ts`・`docker/ports.ts`。
+
+**compose override**: 従来の`ports: !override ["<hostPort>:<internalPort>"]`を
+`ports: !override []`に変更。対象リポジトリの固定ポート定義を空にするので、同一リポジトリの
+複数プレビューを同時起動してもホスト側で衝突しない。
+
+**トレードオフ(仕様変更)**:
+
+- トンネルの確立に失敗するとプレビューへの到達手段が無いため、ビルドは失敗する(フォールバック無し)。
+- `PREVIEW_TUNNEL=false`によるLAN内利用はできなくなる。
+- 公開Webサービスが`network_mode: host`の場合はサービス名で解決できないため利用できない。
+- `{{HOST_PORT}}`を使っている既存のリポジトリ設定は展開されなくなる。

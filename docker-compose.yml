@@ -25,18 +25,15 @@ services:
       # (=このコンテナ内)で絶対パスへ解決されてからホストのデーモンに渡される。
       # ホストとコンテナで同じ絶対パスにマウントし、解決結果を一致させる。
       - "${DATA_DIR:-/srv/pr-preview}:${DATA_DIR:-/srv/pr-preview}"
+      # ディスク使用量の表示用(statfsのみ)。dockerのデータルートを読み取り専用で見る。
+      - "${DOCKER_ROOT_DIR:-/var/lib/docker}:/var/lib/docker:ro"
     environment:
       API_PORT: "8787"
       DATABASE_URL: "file:${DATA_DIR:-/srv/pr-preview}/app.db"
       WORKSPACES_DIR: "${DATA_DIR:-/srv/pr-preview}/workspaces"
-      # ルートFS(イメージ層)ではなくデータ用ディスクの空き容量を表示する。
-      METRICS_DISK_PATH: "${DATA_DIR:-/srv/pr-preview}"
+      # イメージ・ビルドキャッシュ・ボリュームが載るdockerのデータルートを表示する。
+      METRICS_DISK_PATH: "/var/lib/docker"
       WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:5173}"
-      # ブラウザから見たプレビューのホスト名(トンネル無効時のURL生成に使う)。
-      PREVIEW_HOST: "${PREVIEW_HOST:-localhost}"
-      PREVIEW_PORT_MIN: "${PREVIEW_PORT_MIN:-13000}"
-      PREVIEW_PORT_MAX: "${PREVIEW_PORT_MAX:-13999}"
-      PREVIEW_TUNNEL: "${PREVIEW_TUNNEL:-true}"
       PREVIEW_JOB_CONCURRENCY: "${PREVIEW_JOB_CONCURRENCY:-3}"
       PREVIEW_BUILD_TIMEOUT_MS: "${PREVIEW_BUILD_TIMEOUT_MS:-600000}"
       GITHUB_TOKEN: "${GITHUB_TOKEN:-}"

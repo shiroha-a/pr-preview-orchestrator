@@ -106,7 +106,6 @@ model PreviewEnvironment {
   status         String   @default("idle")
   composeProject String
   url            String?
-  hostPort       Int?
   commitSha      String?
   logs           String   @default("")
   // Settings profile used for the last build; null = repository defaults (issue #52).

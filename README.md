@@ -67,17 +67,16 @@ cp server/.env.example server/.env
 
 `server/.env`(`server/.env.example` をコピーして作成)で設定します。**すべて任意**で、未設定でも動作します。
 
-| 変数                            | 説明                         | デフォルト         |
-| ------------------------------- | ---------------------------- | ------------------ |
-| `DATABASE_URL`                  | SQLite のパス                | `file:./dev.db`    |
-| `API_PORT`                      | API サーバーのポート         | `8787`             |
-| `GITHUB_TOKEN`                  | PAT(private / レート緩和)    | (なし=公開APIのみ) |
-| `GITHUB_WEBHOOK_SECRET`         | Webhook 署名検証             | (なし)             |
-| `ADMIN_USER` / `ADMIN_PASSWORD` | 管理画面/APIの Basic 認証    | (なし=認証なし)    |
-| `PREVIEW_TUNNEL`                | Cloudflare トンネルの有効化  | `true`             |
-| `WORKSPACES_DIR`                | リポジトリの clone 先        | `./workspaces`     |
-| `PREVIEW_PORT_MIN` / `..._MAX`  | プレビューのホストポート範囲 | `13000` / `13999`  |
-| `METRICS_DISK_PATH`             | ディスク使用量の計測対象パス | `/`                |
+| 変数                            | 説明                           | デフォルト                      |
+| ------------------------------- | ------------------------------ | ------------------------------- |
+| `DATABASE_URL`                  | SQLite のパス                  | `file:./dev.db`                 |
+| `API_PORT`                      | API サーバーのポート           | `8787`                          |
+| `GITHUB_TOKEN`                  | PAT(private / レート緩和)      | (なし=公開APIのみ)              |
+| `GITHUB_WEBHOOK_SECRET`         | Webhook 署名検証               | (なし)                          |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | 管理画面/APIの Basic 認証      | (なし=認証なし)                 |
+| `WORKSPACES_DIR`                | リポジトリの clone 先          | `./workspaces`                  |
+| `PREVIEW_TUNNEL_IMAGE`          | トンネルに使う Docker イメージ | `cloudflare/cloudflared:latest` |
+| `METRICS_DISK_PATH`             | ディスク使用量の計測対象パス   | `/var/lib/docker`               |
 
 ## 起動
 
@@ -128,17 +127,14 @@ composeでは**ホストとコンテナで同じ絶対パス**にマウントし
 - **`/var/run/docker.sock` のマウントはホストのroot権限と同等**です。本ツールは元々
   対象リポジトリの任意コードをローカルDockerで実行するため前提は変わりませんが、
   **信頼できるリポジトリのみ**を対象にしてください。
-- プレビュー用ホストポートの空き判定は、ホストのデーモンが公開中のポート(`docker ps`)と
-  DBの割り当て済みポートで行います。**docker以外のホストプロセス**が
-  `PREVIEW_PORT_MIN`〜`PREVIEW_PORT_MAX` を使用している場合はコンテナ内から検出できないため、
-  必要に応じてポート範囲を空いている帯に狭めてください。
+- プレビューはホストポートを一切公開せず、Cloudflare Tunnel からのみ到達できます。
+  そのため本体をコンテナで動かしてもポートの取り合いは起きません。
 - Basic認証(`ADMIN_USER` / `ADMIN_PASSWORD`)を設定しない場合は `APP_BIND=127.0.0.1` にして、
   リバースプロキシ経由で公開してください。
-- ディスク使用量の表示は `METRICS_DISK_PATH`(composeでは`DATA_DIR`)のファイルシステムが対象です。
-  コンテナのルートFS(イメージ層)ではありません。
+- ディスク使用量の表示は `METRICS_DISK_PATH`(既定は`/var/lib/docker`)のファイルシステムが対象です。
+  composeではdockerのデータルートを読み取り専用でマウントしています(`statfs`のみに使用)。
+  データルートを既定から変更している場合は`.env`の`DOCKER_ROOT_DIR`を設定してください。
 - コンテナはrootで動くため、`DATA_DIR`配下のファイルはroot所有になります。
-- リモートのサーバーで動かす場合は `PREVIEW_HOST` をそのホスト名/IPに変更してください
-  (トンネル無効時のプレビューURLに使われます)。
 
 ### 運用
 
@@ -172,13 +168,22 @@ docker compose down             # 本体の停止
 
 ## プレビューの外部公開(Cloudflare Quick Tunnel)
 
-プレビュー起動時に `cloudflare/cloudflared` イメージのコンテナ(`tunnel --url http://localhost:<ポート>`)を
-`--network host` で立て、`*.trycloudflare.com` の公開URLを払い出します。破棄時にトンネルも停止します。
+プレビューの公開は **Cloudflare Quick Tunnel 経由のみ**です(issue #90)。ホストポートは
+一切公開しないため、複数プレビューを同時に起動してもポートが衝突せず、ファイアウォールに
+穴を開ける必要もありません。
+
+流れ:
+
+1. `compose up` の前に `cloudflare/cloudflared` イメージのコンテナを立て、公開URL
+   (`*.trycloudflare.com`)を先に確定させる(このURLをファイル書き換えで設定へ注入できる)
+2. `compose up` 後、トンネルのコンテナをプレビューのネットワークに接続する。origin は
+   compose のサービス名(例: `http://web:3000`)で解決される
+3. 破棄時にトンネルも停止する
 
 - トンネルは本体とは独立したコンテナなので、本体を再起動しても公開URLは変わりません(issue #48)。
   ホストへの `cloudflared` のインストールは不要です。
-- 起動に失敗した場合は `http://<PREVIEW_HOST>:<ポート>` にフォールバックします。
-- `PREVIEW_TUNNEL=false` でトンネルを無効化できます。
+- トンネルの確立に失敗した場合、プレビューへの到達手段が無いためビルドは失敗します。
+- 公開Webサービスが `network_mode: host` の場合はサービス名で解決できないため利用できません。
 
 ## 対象リポジトリの docker-compose.yml
 
@@ -194,8 +199,9 @@ clone され、その中で `docker compose ... up -d --build` が実行され�
   - 内部ポート(その service がコンテナ内で Listen するポート、例: `3000`)
 - **ビルドディレクトリ**: compose の `build:` の context は clone 先のリポジトリルートです。
   既存の `build: .` や `build: ./docker` はそのまま使えます。
-- **ポート**: オーケストレーターが override を生成し、公開 Web サービスの内部ポートに
-  **動的なホストポート**を割り当てます。既存の `ports:` は Compose の `!override` で置き換えるため、
+- **ポート**: オーケストレーターが override を生成し、公開 Web サービスの `ports:` を
+  Compose の `!override` で**空に**します(ホストポートは公開しません)。公開は
+  Cloudflare Tunnel が担い、内部ポートへ直接つなぐため、
   **既存の `docker-compose.yml` をそのまま使えます**(複数PR同時起動でもポートが競合しません)。
 - 記入例: [`examples/docker-compose.example.yml`](examples/docker-compose.example.yml)
 
@@ -204,7 +210,7 @@ clone され、その中で `docker compose ... up -d --build` が実行され�
 リポジトリの**プレビュー設定**で以下も設定できます。
 
 - **ファイル書き換えルール**: clone後・起動前に、対象リポジトリ内の既存ファイルを正規表現で書き換えます。
-  置換文字列で `{{PREVIEW_URL}}` / `{{PREVIEW_HOST}}` / `{{HOST_PORT}}` を展開できるため、トンネルURLを設定ファイルへ注入できます。
+  置換文字列で `{{PREVIEW_URL}}` / `{{PREVIEW_HOST}}` を展開できるため、トンネルURLを設定ファイルへ注入できます。
   - 例(Misskey): 対象 `.config/default.yml`、パターン `^url:.*`、置換 `url: {{PREVIEW_URL}}`
   - PR情報の変数も使えます(issue #75): `{{PR_NUMBER}}`(PR番号)/ `{{PR_TITLE}}`(PRタイトル)/
     `{{PROFILE_NAME}}`(使用中のプロファイル名。既定設定では空文字)。ブランチプレビューでは
