@@ -19,11 +19,25 @@ const loading = ref(true);
 const error = ref<string | null>(null);
 const config = ref<AppConfig | null>(null);
 
-// msのままだと桁が読みにくいので分/秒を併記する。
+/** 600000 -> "10分"、210000 -> "3分30秒"、45000 -> "45秒"。1秒未満は空文字。 */
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 1) return "";
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}時間`);
+  if (minutes > 0) parts.push(`${minutes}分`);
+  if (seconds > 0) parts.push(`${seconds}秒`);
+  return parts.join("");
+}
+
+// msのままだと桁が読みにくいので、時分秒の表記を併記する。
 const buildTimeoutLabel = computed(() => {
   const ms = config.value?.preview.buildTimeoutMs ?? 0;
-  const unit = ms % 60000 === 0 ? `${ms / 60000}分` : `${Math.round(ms / 1000)}秒`;
-  return `${unit} (${ms} ms)`;
+  const human = formatDuration(ms);
+  return human ? `${human} (${ms} ms)` : `${ms} ms`;
 });
 
 // ユーザー管理
