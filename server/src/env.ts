@@ -60,6 +60,11 @@ const envSchema = z.object({
   // different previews run concurrently; same-preview jobs stay serialized.
   PREVIEW_JOB_CONCURRENCY: z.coerce.number().int().min(1).default(3),
 
+  // Filesystem path measured by the disk usage metric. When the orchestrator
+  // runs in a container (issue #90), point this at the mounted data directory
+  // so the gauge reflects the host disk instead of the container overlay fs.
+  METRICS_DISK_PATH: z.string().default("/"),
+
   // Directory of the built web SPA, served by Hono in production (relative to server/).
   WEB_DIST_DIR: z.string().default("../web/dist"),
 });

@@ -36,7 +36,11 @@ GitHubと連携し、Pull Requestごとにエフェメラルなプレビュー�
 - Node.js 22+
 - Docker / Docker Compose
 - git
-- [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)(プレビューの外部公開に使用。`PREVIEW_TUNNEL=false`なら不要)
+
+本体をDockerで動かす場合(後述の[Dockerで動かす](#dockerで動かす))はDockerのみで、
+Node.jsとgitのインストールは不要です。プレビューの外部公開に使う `cloudflared` は
+Dockerイメージ(`cloudflare/cloudflared`)として起動するため、どちらの構成でも
+ホストへのインストールは不要です。
 
 ## セットアップ
 
@@ -73,6 +77,7 @@ cp server/.env.example server/.env
 | `PREVIEW_TUNNEL`                | Cloudflare トンネルの有効化  | `true`             |
 | `WORKSPACES_DIR`                | リポジトリの clone 先        | `./workspaces`     |
 | `PREVIEW_PORT_MIN` / `..._MAX`  | プレビューのホストポート範囲 | `13000` / `13999`  |
+| `METRICS_DISK_PATH`             | ディスク使用量の計測対象パス | `/`                |
 
 ## 起動
 
@@ -91,6 +96,60 @@ npm run dev
 npm run build   # web を静的ビルド + server を dist にバンドル
 npm start       # http://localhost:8787 で WebUI と API を同一ポートで配信
 ```
+
+## Dockerで動かす
+
+本体(オーケストレーター)自体をコンテナで実行できます(issue #90)。プレビュー環境は
+コンテナの中ではなく、マウントした `/var/run/docker.sock` 経由で**ホストのdockerデーモン**上に
+作られます(Docker-out-of-Docker。コンテナ内にデーモンは持ちません)。
+
+```bash
+cp .env.example .env          # DATA_DIR(絶対パス)などを設定
+docker compose up -d --build  # WebUI/API: http://localhost:8787
+```
+
+- イメージにはdocker CLI・composeプラグイン・gitが同梱されます。ホスト側に必要なのはDockerだけです。
+- 起動時に `prisma migrate deploy` が実行され、SQLiteのスキーマが最新化されます。
+- 設定は `docker-compose.yml` と同じ場所の `.env` で行います(`server/.env` は使いません)。
+
+### データディレクトリ(`DATA_DIR`)
+
+SQLite(`app.db`)と対象リポジトリのclone先(`workspaces/`)を置く場所で、**絶対パス必須**です。
+composeでは**ホストとコンテナで同じ絶対パス**にマウントしています。
+
+これは対象リポジトリの `docker-compose.yml` にある**相対パスのbind mount**
+(`./config:/app/config` など)のためです。composeはbind mountのパスを**CLI側**で
+絶対パスへ解決してからデーモンへ渡すため、本体がコンテナ内で動くとコンテナ内のパスが渡ります。
+ホストに同じパスが無いとデーモンが空ディレクトリを作ってしまい、マウントした内容が
+消えたように見えます。同一パスでマウントすることでこれを回避しています。
+
+### 注意点
+
+- **`/var/run/docker.sock` のマウントはホストのroot権限と同等**です。本ツールは元々
+  対象リポジトリの任意コードをローカルDockerで実行するため前提は変わりませんが、
+  **信頼できるリポジトリのみ**を対象にしてください。
+- プレビュー用ホストポートの空き判定は、ホストのデーモンが公開中のポート(`docker ps`)と
+  DBの割り当て済みポートで行います。**docker以外のホストプロセス**が
+  `PREVIEW_PORT_MIN`〜`PREVIEW_PORT_MAX` を使用している場合はコンテナ内から検出できないため、
+  必要に応じてポート範囲を空いている帯に狭めてください。
+- Basic認証(`ADMIN_USER` / `ADMIN_PASSWORD`)を設定しない場合は `APP_BIND=127.0.0.1` にして、
+  リバースプロキシ経由で公開してください。
+- ディスク使用量の表示は `METRICS_DISK_PATH`(composeでは`DATA_DIR`)のファイルシステムが対象です。
+  コンテナのルートFS(イメージ層)ではありません。
+- コンテナはrootで動くため、`DATA_DIR`配下のファイルはroot所有になります。
+- リモートのサーバーで動かす場合は `PREVIEW_HOST` をそのホスト名/IPに変更してください
+  (トンネル無効時のプレビューURLに使われます)。
+
+### 運用
+
+```bash
+docker compose logs -f          # ログ
+docker compose up -d --build    # 更新(git pull 後)
+docker compose down             # 本体の停止
+```
+
+`docker compose down` で停止するのは本体だけです。プレビュー環境とトンネルのコンテナは
+ホストのデーモン上に残り、本体を起動し直すとそのまま復帰します(issue #48)。
 
 ## 使い方
 
@@ -113,10 +172,12 @@ npm start       # http://localhost:8787 で WebUI と API を同一ポートで�
 
 ## プレビューの外部公開(Cloudflare Quick Tunnel)
 
-プレビュー起動時に `cloudflared tunnel --url http://localhost:<ポート>` で使い捨てトンネルを立て、
-`*.trycloudflare.com` の公開URLを払い出します。破棄時にトンネルも停止します。
+プレビュー起動時に `cloudflare/cloudflared` イメージのコンテナ(`tunnel --url http://localhost:<ポート>`)を
+`--network host` で立て、`*.trycloudflare.com` の公開URLを払い出します。破棄時にトンネルも停止します。
 
-- `cloudflared` が未インストール、または起動に失敗した場合は `http://localhost:<ポート>` にフォールバックします。
+- トンネルは本体とは独立したコンテナなので、本体を再起動しても公開URLは変わりません(issue #48)。
+  ホストへの `cloudflared` のインストールは不要です。
+- 起動に失敗した場合は `http://<PREVIEW_HOST>:<ポート>` にフォールバックします。
 - `PREVIEW_TUNNEL=false` でトンネルを無効化できます。
 
 ## 対象リポジトリの docker-compose.yml

@@ -5,6 +5,7 @@ import os from "node:os";
 import { Hono } from "hono";
 
 import { prisma } from "../db/client";
+import { env } from "../env";
 
 export const metricsRoutes = new Hono();
 
@@ -158,7 +159,8 @@ metricsRoutes.get("/", async (c) => {
 
   let disk = { total: 0, used: 0, free: 0 };
   try {
-    const s = await statfs("/");
+    // コンテナ運用ではルートFSがイメージ層になるため、計測対象をenvで差し替える(issue #90)。
+    const s = await statfs(env.METRICS_DISK_PATH);
     const blockSize = Number(s.bsize);
     const total = Number(s.blocks) * blockSize;
     const free = Number(s.bavail) * blockSize;

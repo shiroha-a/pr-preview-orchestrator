@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+.git
+.github
+.tmp
+workspaces
+**/workspaces
+*.db
+*.db-journal
+server/*.db
+server/*.db-journal
+.env
+**/.env

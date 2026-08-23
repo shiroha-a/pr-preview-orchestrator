@@ -1,0 +1,51 @@
+# 本体(オーケストレーター)をDockerで動かすためのcompose(issue #90)。
+#
+#   cp .env.example .env    # DATA_DIR などを設定(DATA_DIRは絶対パス)
+#   docker compose up -d --build
+#
+# プレビュー環境はこのコンテナの中ではなく、マウントしたソケット経由で
+# **ホストのdockerデーモン**上に作られる(Docker-out-of-Docker)。
+
+services:
+  app:
+    build: .
+    image: pr-preview-orchestrator:latest
+    container_name: ${CONTAINER_NAME:-pr-preview-orchestrator}
+    restart: unless-stopped
+    # docker CLIの孫プロセスがゾンビとして残らないようtiniを挟む。
+    init: true
+    ports:
+      # 認証(ADMIN_USER/ADMIN_PASSWORD)を設定しない場合はAPP_BIND=127.0.0.1にして
+      # リバースプロキシ経由で公開すること。
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8787}:8787"
+    volumes:
+      # ホストのdockerデーモンを操作する。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 対象リポジトリの docker-compose.yml が持つ相対パスのbind mountは、compose CLI
+      # (=このコンテナ内)で絶対パスへ解決されてからホストのデーモンに渡される。
+      # ホストとコンテナで同じ絶対パスにマウントし、解決結果を一致させる。
+      - "${DATA_DIR:-/srv/pr-preview}:${DATA_DIR:-/srv/pr-preview}"
+    environment:
+      API_PORT: "8787"
+      DATABASE_URL: "file:${DATA_DIR:-/srv/pr-preview}/app.db"
+      WORKSPACES_DIR: "${DATA_DIR:-/srv/pr-preview}/workspaces"
+      # ルートFS(イメージ層)ではなくデータ用ディスクの空き容量を表示する。
+      METRICS_DISK_PATH: "${DATA_DIR:-/srv/pr-preview}"
+      WEB_ORIGIN: "${WEB_ORIGIN:-http://localhost:5173}"
+      # ブラウザから見たプレビューのホスト名(トンネル無効時のURL生成に使う)。
+      PREVIEW_HOST: "${PREVIEW_HOST:-localhost}"
+      PREVIEW_PORT_MIN: "${PREVIEW_PORT_MIN:-13000}"
+      PREVIEW_PORT_MAX: "${PREVIEW_PORT_MAX:-13999}"
+      PREVIEW_TUNNEL: "${PREVIEW_TUNNEL:-true}"
+      PREVIEW_JOB_CONCURRENCY: "${PREVIEW_JOB_CONCURRENCY:-3}"
+      PREVIEW_BUILD_TIMEOUT_MS: "${PREVIEW_BUILD_TIMEOUT_MS:-600000}"
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      GITHUB_WEBHOOK_SECRET: "${GITHUB_WEBHOOK_SECRET:-}"
+      ADMIN_USER: "${ADMIN_USER:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
