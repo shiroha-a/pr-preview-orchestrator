@@ -24,7 +24,13 @@ jobs:
         run: bash scripts/ci.sh
 
   docker:
-    runs-on: ubuntu-latest
+    # ghcr.ioへはlinux/amd64とlinux/arm64を配布する(issue #94)。両方のネイティブランナーで
+    # イメージがビルドできることをPRの段階で確認する。
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v4
 

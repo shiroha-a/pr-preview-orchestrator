@@ -1,7 +1,8 @@
 # 本体(オーケストレーター)をDockerで動かすためのcompose(issue #90)。
 #
 #   cp .env.example .env    # DATA_DIR などを設定(DATA_DIRは絶対パス)
-#   docker compose up -d --build
+#   docker compose pull     # ghcr.ioのビルド済みイメージを取得(issue #94)
+#   docker compose up -d
 #
 # プレビュー環境はこのコンテナの中ではなく、マウントしたソケット経由で
 # **ホストのdockerデーモン**上に作られる(Docker-out-of-Docker)。
@@ -9,7 +10,11 @@
 services:
   app:
     build: .
-    image: pr-preview-orchestrator:latest
+    # 既定ではghcr.ioのビルド済みイメージを使う(issue #94)。composeはbuild:がある場合
+    # ローカルにイメージが無ければbuildするため、配布イメージを使うときは先に
+    # `docker compose pull` を実行する。自分でビルドするなら `up -d --build`。
+    # fork運用などで参照先を変える場合はAPP_IMAGEを設定する。
+    image: ${APP_IMAGE:-ghcr.io/shiroha-a/pr-preview-orchestrator:latest}
     container_name: ${CONTAINER_NAME:-pr-preview-orchestrator}
     restart: unless-stopped
     # docker CLIの孫プロセスがゾンビとして残らないようtiniを挟む。

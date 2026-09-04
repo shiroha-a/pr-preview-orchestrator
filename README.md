@@ -103,13 +103,35 @@ npm start       # http://localhost:8787 で WebUI と API を同一ポートで�
 作られます(Docker-out-of-Docker。コンテナ内にデーモンは持ちません)。
 
 ```bash
-cp .env.example .env          # DATA_DIR(絶対パス)などを設定
-docker compose up -d --build  # WebUI/API: http://localhost:8787
+cp .env.example .env   # DATA_DIR(絶対パス)などを設定
+docker compose pull    # ghcr.ioのビルド済みイメージを取得
+docker compose up -d   # WebUI/API: http://localhost:8787
 ```
+
+自分でビルドする場合は `docker compose up -d --build` を使います
+(composeは `build:` があるとローカルにイメージが無いときpullではなくビルドするため、
+配布イメージを使う場合は上記のとおり先に `docker compose pull` を実行してください)。
 
 - イメージにはdocker CLI・composeプラグイン・gitが同梱されます。ホスト側に必要なのはDockerだけです。
 - 起動時に `prisma migrate deploy` が実行され、SQLiteのスキーマが最新化されます。
 - 設定は `docker-compose.yml` と同じ場所の `.env` で行います(`server/.env` は使いません)。
+
+### 配布イメージ
+
+`main` へのpushごとに [ghcr.io](https://ghcr.io) へビルド済みイメージを公開しています(issue #94)。
+
+| 項目               | 値                                                        |
+| ------------------ | --------------------------------------------------------- |
+| イメージ           | `ghcr.io/shiroha-a/pr-preview-orchestrator`               |
+| タグ               | `latest`(mainの最新) / `sha-<短縮ハッシュ>`(特定コミット) |
+| 対応アーキテクチャ | `linux/amd64` / `linux/arm64`                             |
+
+バージョンを固定したい場合や、forkして自分のレジストリを使う場合は `.env` の `APP_IMAGE` で
+参照先を変更できます。
+
+```bash
+APP_IMAGE="ghcr.io/shiroha-a/pr-preview-orchestrator:sha-1a2b3c4"
+```
 
 ### データディレクトリ(`DATA_DIR`)
 
@@ -146,9 +168,10 @@ composeでは**ホストとコンテナで同じ絶対パス**にマウントし
 ### 運用
 
 ```bash
-docker compose logs -f          # ログ
-docker compose up -d --build    # 更新(git pull 後)
-docker compose down             # 本体の停止
+docker compose logs -f                        # ログ
+docker compose pull && docker compose up -d   # 更新(配布イメージ)
+docker compose up -d --build                  # 更新(自前ビルド。git pull 後)
+docker compose down                           # 本体の停止
 ```
 
 `docker compose down` で停止するのは本体だけです。プレビュー環境とトンネルのコンテナは
