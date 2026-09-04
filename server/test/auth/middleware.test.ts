@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { Hono } from "hono";
 
 import { dbBasicAuth, setCachedUserCount } from "../../src/auth/middleware";
@@ -92,5 +92,54 @@ describe("dbBasicAuth", () => {
     const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
     const res = await app.request("/");
     expect(res.status).toBe(401);
+  });
+
+  it("送られた認証情報が不正な場合は警告ログに残す", async () => {
+    await prisma.user.create({
+      data: { username: "admin", passwordHash: await hashPassword("pass") },
+    });
+    setCachedUserCount(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
+    const res = await app.request("/", {
+      headers: { Authorization: basicAuthHeader("admin", "wrong") },
+    });
+
+    expect(res.status).toBe(401);
+    expect(warn).toHaveBeenCalledWith('[auth] Rejected Basic auth for user "admin"');
+    warn.mockRestore();
+  });
+
+  it("警告ログにパスワードを含めない", async () => {
+    await prisma.user.create({
+      data: { username: "admin", passwordHash: await hashPassword("pass") },
+    });
+    setCachedUserCount(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
+    await app.request("/", {
+      headers: { Authorization: basicAuthHeader("admin", "sup3rSecret") },
+    });
+
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("sup3rSecret");
+    warn.mockRestore();
+  });
+
+  it("Authorizationヘッダーなし（通常の初回アクセス）ではログを出さない", async () => {
+    await prisma.user.create({
+      data: { username: "admin", passwordHash: await hashPassword("pass") },
+    });
+    setCachedUserCount(1);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const app = new Hono().use("*", dbBasicAuth(prisma)).get("/", (c) => c.json({ ok: true }));
+    const res = await app.request("/");
+
+    expect(res.status).toBe(401);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

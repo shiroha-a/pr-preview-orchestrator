@@ -36,6 +36,22 @@ const DUMMY_HASH =
   "$2b$12$abcdefghijklmnopqrstuvwxycV/PgbONQlK6HsN6qPoQfXzAzMn3Gq";
 
 /**
+ * Reject the request with 401 and the Basic challenge header.
+ *
+ * `reason` is logged only when credentials were actually sent and rejected;
+ * a request with no Authorization header is the normal first hit and stays
+ * silent. Passwords are never logged.
+ */
+function unauthorized(c: Context, reason?: string): never {
+  // 認証情報を送ったうえでの失敗だけを記録する。docker composeは.envの値を
+  // 変数展開するため、$を含むADMIN_PASSWORDは壊れた状態でコンテナへ渡る。
+  // その場合に何度入力しても401になる原因を、ログから追えるようにする。
+  if (reason) console.warn(`[auth] ${reason}`);
+  c.header("WWW-Authenticate", 'Basic realm="Admin"');
+  throw new HTTPException(401, { message: "Unauthorized" });
+}
+
+/**
  * DB に保存された bcrypt ハッシュ照合型 Basic Auth ミドルウェア。
  *
  * cachedUserCount がまだ null（未初期化）の場合は、ここで遅延初期化して
@@ -56,15 +72,13 @@ export function dbBasicAuth(p: PrismaClient = prisma) {
 
     const auth = c.req.header("Authorization");
     if (!auth || !auth.startsWith("Basic ")) {
-      c.header("WWW-Authenticate", 'Basic realm="Admin"');
-      throw new HTTPException(401, { message: "Unauthorized" });
+      unauthorized(c);
     }
 
     const decoded = Buffer.from(auth.slice(6), "base64").toString("utf-8");
     const colonIndex = decoded.indexOf(":");
     if (colonIndex === -1) {
-      c.header("WWW-Authenticate", 'Basic realm="Admin"');
-      throw new HTTPException(401, { message: "Unauthorized" });
+      unauthorized(c, "Rejected malformed Basic credentials");
     }
 
     const username = decoded.slice(0, colonIndex);
@@ -77,8 +91,7 @@ export function dbBasicAuth(p: PrismaClient = prisma) {
     const valid = await verifyPassword(password, hashToCompare);
 
     if (!user || !valid) {
-      c.header("WWW-Authenticate", 'Basic realm="Admin"');
-      throw new HTTPException(401, { message: "Unauthorized" });
+      unauthorized(c, `Rejected Basic auth for user "${username}"`);
     }
 
     c.set("authUsername", user.username);
