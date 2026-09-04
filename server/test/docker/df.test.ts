@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDockerSize, parseSystemDf } from "../../src/docker/df";
+import { formatDockerSize, parseDockerSize, parseSystemDf } from "../../src/docker/df";
 
 describe("parseDockerSize", () => {
   it("decimal units used by docker system df", () => {
@@ -23,6 +23,25 @@ describe("parseDockerSize", () => {
   it("returns 0 for malformed input", () => {
     expect(parseDockerSize("")).toBe(0);
     expect(parseDockerSize("N/A")).toBe(0);
+  });
+});
+
+describe("formatDockerSize", () => {
+  it("formats with the decimal units docker prints", () => {
+    expect(formatDockerSize(0)).toBe("0B");
+    expect(formatDockerSize(999)).toBe("999B");
+    expect(formatDockerSize(1000)).toBe("1.0kB");
+    expect(formatDockerSize(3_896_000)).toBe("3.9MB");
+    expect(formatDockerSize(12_300_000_000)).toBe("12.3GB");
+  });
+
+  it("round-trips through parseDockerSize", () => {
+    expect(parseDockerSize(formatDockerSize(12_300_000_000))).toBe(12_300_000_000);
+    expect(parseDockerSize(formatDockerSize(930_500))).toBe(930_500);
+  });
+
+  it("returns 0B for non-finite input", () => {
+    expect(formatDockerSize(Number.NaN)).toBe("0B");
   });
 });
 

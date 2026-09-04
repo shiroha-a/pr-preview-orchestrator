@@ -1,5 +1,5 @@
 import { prisma } from "../db/client";
-import { invalidateDockerDiskUsageCache } from "./df";
+import { formatDockerSize, getImagesSizeBytes, invalidateDockerDiskUsageCache } from "./df";
 import {
   imageRemovalRefs,
   IMAGE_INSPECT_FORMAT,
@@ -16,7 +16,10 @@ export interface CleanupStatus {
   last: {
     kind: CleanupKind;
     ok: boolean;
-    /** One-line human-readable result (e.g. "Total reclaimed space: 76GB"). */
+    /**
+     * One-line human-readable result: "Total reclaimed space: 76GB" for a
+     * builder prune, "プレビューイメージ29件を削除 / 解放: 12.3GB" for an image prune.
+     */
     summary: string;
     error: string | null;
     startedAt: string;
@@ -94,6 +97,41 @@ export function startBuilderPrune(opts: { all: boolean }): boolean {
   });
 }
 
+/** Outcome of an image cleanup run, used to build its one-line summary. */
+export interface ImagePruneResult {
+  removed: number;
+  skipped: number;
+  /** Bytes freed, or null when the measurement was unavailable. */
+  freedBytes: number | null;
+}
+
+/**
+ * Bytes freed between two `docker system df` readings, or null when either
+ * measurement is unavailable.
+ *
+ * Clamped at 0: a build running alongside the cleanup grows the image store and
+ * can make the difference negative.
+ */
+export function computeFreedBytes(before: number | null, after: number | null): number | null {
+  if (before === null || after === null) return null;
+  return Math.max(0, before - after);
+}
+
+/**
+ * One-line summary of a finished image cleanup.
+ *
+ * The freed size is measured by diffing `docker system df` around the run
+ * because `docker rmi` reports no size at all: reporting only the trailing
+ * `docker image prune` output made a run that deleted many preview images
+ * look like it reclaimed 0B (issue #92).
+ */
+export function formatImagePruneSummary(result: ImagePruneResult): string {
+  const parts = [`プレビューイメージ${result.removed}件を削除`];
+  if (result.skipped > 0) parts.push(`${result.skipped}件は使用中のためスキップ`);
+  if (result.freedBytes !== null) parts.push(`解放: ${formatDockerSize(result.freedBytes)}`);
+  return parts.join(" / ");
+}
+
 /**
  * Remove images left behind by destroyed previews, then prune dangling images
  * (issue #67). Only images labeled with a `preview-*` compose project that has
@@ -103,6 +141,9 @@ export function startBuilderPrune(opts: { all: boolean }): boolean {
  */
 export function startImagePrune(): boolean {
   return start("image-prune", async () => {
+    // 削除の前後でイメージ使用量を測り、その差分を解放量として報告する(issue #92)。
+    const sizeBefore = await getImagesSizeBytes();
+
     const ls = await runDocker(["images", "-aq", "--no-trunc"]);
     if (ls.code !== 0) throw new Error(`docker images failed: ${lastLine(ls.output)}`);
     const ids = [
@@ -154,9 +195,9 @@ export function startImagePrune(): boolean {
     });
     if (prune.code !== 0) throw new Error(`docker image prune failed: ${lastLine(prune.output)}`);
 
-    const parts = [`プレビューイメージ${removed}件を削除`];
-    if (skipped > 0) parts.push(`${skipped}件は使用中のためスキップ`);
-    parts.push(`dangling: ${lastLine(prune.output) || "削除なし"}`);
-    return parts.join(" / ");
+    const sizeAfter = await getImagesSizeBytes();
+    const freedBytes = computeFreedBytes(sizeBefore, sizeAfter);
+
+    return formatImagePruneSummary({ removed, skipped, freedBytes });
   });
 }

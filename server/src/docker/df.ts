@@ -50,6 +50,23 @@ export function parseDockerSize(value: string): number {
   return Number.isFinite(val) ? Math.round(val * (mult[m[2].toLowerCase()] ?? 1)) : 0;
 }
 
+/**
+ * Format bytes back into the decimal units the docker CLI prints ("12.3GB",
+ * "930.5kB", "0B"). The inverse of {@link parseDockerSize}.
+ */
+export function formatDockerSize(bytes: number): string {
+  if (!Number.isFinite(bytes)) return "0B";
+  const units = ["B", "kB", "MB", "GB", "TB", "PB"];
+  let value = bytes;
+  let unit = 0;
+  while (Math.abs(value) >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit += 1;
+  }
+  // バイトは小数を出しても意味が無いので整数で丸める。
+  return unit === 0 ? `${Math.round(value)}B` : `${value.toFixed(1)}${units[unit]}`;
+}
+
 /** Parse `docker system df --format "{{json .}}"` output lines into rows. */
 export function parseSystemDf(lines: string[]): DockerDfRow[] {
   const rows: DockerDfRow[] = [];
@@ -85,6 +102,22 @@ let inFlight: Promise<DockerDiskUsage> | null = null;
 /** Drop the cache so the next read reflects a just-finished cleanup. */
 export function invalidateDockerDiskUsageCache(): void {
   cached = null;
+}
+
+/**
+ * Size of the Images row of `docker system df`, or null when it cannot be read.
+ *
+ * Used to measure how much an image cleanup actually freed by diffing before
+ * and after (issue #92). Never throws: a failed measurement must not turn a
+ * successful cleanup into an error.
+ */
+export async function getImagesSizeBytes(): Promise<number | null> {
+  try {
+    const usage = await getDockerDiskUsage(true);
+    return usage.rows.find((r) => r.type === "images")?.sizeBytes ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Docker-wide disk usage, the `docker system df` equivalent (issue #68). */
