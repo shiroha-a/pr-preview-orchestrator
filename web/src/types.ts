@@ -145,7 +145,8 @@ export interface PreviewUsage {
 export interface SystemMetrics {
   memory: { total: number; used: number; free: number };
   swap: { total: number; used: number; free: number };
-  disk: { total: number; used: number; free: number };
+  // path は実際に計測したパス(METRICS_DISK_PATH、失敗時は "/")。どちらも読めないと null(issue #97)。
+  disk: { total: number; used: number; free: number; path: string | null };
   loadavg: number[];
   previews: PreviewUsage[];
 }

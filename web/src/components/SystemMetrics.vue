@@ -41,6 +41,11 @@ const swapPct = computed(() =>
 const diskPct = computed(() =>
   metrics.value ? pct(metrics.value.disk.used, metrics.value.disk.total) : 0,
 );
+// 計測対象はMETRICS_DISK_PATH(既定はdockerのデータルート)で、"/"とは限らない(issue #97)。
+const diskLabel = computed(() => {
+  const path = metrics.value?.disk.path;
+  return path ? `ディスク (${path})` : "ディスク";
+});
 
 async function load() {
   try {
@@ -221,8 +226,9 @@ onUnmounted(() => {
 
         <div>
           <div class="mb-1 flex justify-between text-xs text-gray-500">
-            <span>ディスク (/)</span>
-            <span>
+            <!-- パスは可変長なので、溢れても右の数値を押し出さないよう省略する。 -->
+            <span class="min-w-0 truncate" :title="diskLabel">{{ diskLabel }}</span>
+            <span class="shrink-0">
               {{ gb(metrics.disk.used) }} / {{ gb(metrics.disk.total) }} GB ({{ diskPct }}%)
             </span>
           </div>
