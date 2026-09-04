@@ -34,6 +34,15 @@ interface DiskUsage {
 
 const ZERO_DISK: DiskUsage = { total: 0, used: 0, free: 0 };
 
+/** Path measured when the configured one is unavailable. */
+const DISK_FALLBACK_PATH = "/";
+
+/** Filesystem usage together with the path the numbers came from (issue #97). */
+export interface MeasuredDisk extends DiskUsage {
+  /** Path actually measured, or null when nothing could be read. */
+  path: string | null;
+}
+
 /** Filesystem usage of the given path, or null when it cannot be measured. */
 async function diskUsage(path: string): Promise<DiskUsage | null> {
   try {
@@ -46,6 +55,28 @@ async function diskUsage(path: string): Promise<DiskUsage | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Measure `path`, falling back to "/" when it is unavailable (rootless docker,
+ * a container without the bind mount; issue #90), and report which path the
+ * numbers came from so the UI can label them correctly (issue #97).
+ *
+ * `measure` is injectable so this can be tested without touching a filesystem.
+ */
+export async function resolveDiskUsage(
+  path: string,
+  measure: (p: string) => Promise<DiskUsage | null> = diskUsage,
+): Promise<MeasuredDisk> {
+  const primary = await measure(path);
+  if (primary) return { ...primary, path };
+
+  // 設定パスがフォールバック先と同じなら測り直しても結果は変わらない。
+  if (path === DISK_FALLBACK_PATH) return { ...ZERO_DISK, path: null };
+
+  const fallback = await measure(DISK_FALLBACK_PATH);
+  if (fallback) return { ...fallback, path: DISK_FALLBACK_PATH };
+  return { ...ZERO_DISK, path: null };
 }
 
 interface RawContainerStat {
@@ -181,7 +212,7 @@ metricsRoutes.get("/", async (c) => {
 
   // 実際に逼迫するのはdockerのデータルート(イメージ/ビルドキャッシュ/ボリューム)なので
   // 既定はそこを見る。マウントされていない等で取得できない場合は / へ退避する(issue #90)。
-  const disk = (await diskUsage(env.METRICS_DISK_PATH)) ?? (await diskUsage("/")) ?? ZERO_DISK;
+  const disk = await resolveDiskUsage(env.METRICS_DISK_PATH);
 
   const swap = await readSwap();
   const previews = await previewUsage();
