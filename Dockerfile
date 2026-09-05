@@ -1,7 +1,11 @@
 # 本体(オーケストレーター)をコンテナで動かすためのイメージ(issue #90)。
 # プレビュー環境は**ホストのdockerデーモン**上に作るため(Docker-out-of-Docker)、
-# docker CLI + composeプラグインとgitを同梱し、実行時に /var/run/docker.sock を
+# docker CLI + compose/buildxプラグインとgitを同梱し、実行時に /var/run/docker.sock を
 # バインドマウントする。コンテナ内にデーモンは持たない。
+# buildxはCLIプラグインなので、ホスト側に入っていてもコンテナ側に必要。無いと
+# compose buildがクラシックビルダーへフォールバックし、BuildKit専用機能
+# (RUN --mount / --secret / --ssh / 追加コンテキスト等)を使う対象リポジトリの
+# ビルドが壊れる(issue #101)。
 FROM node:26-trixie-slim
 
 # Dockerのaptリポジトリはベースイメージのコードネームに追従させる(ベース更新時に
@@ -13,7 +17,7 @@ RUN apt-get update \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+ && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin docker-buildx-plugin \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
