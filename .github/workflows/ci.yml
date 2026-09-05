@@ -47,6 +47,7 @@ jobs:
             node -v
             docker --version
             docker compose version --short
+            docker buildx version
             git --version
             test -f /app/web/dist/index.html
             test -f /app/server/dist/index.js
